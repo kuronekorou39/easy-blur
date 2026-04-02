@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Combiner - 画像結合ツール</title>
+    <link rel="stylesheet" href="combine.css">
+</head>
+<body>
+    <header class="header">
+        <div class="header-left">
+            <h1 class="app-title">Image Combiner</h1>
+            <span class="image-count" id="imageCount"></span>
+        </div>
+        <div class="header-right">
+            <button id="clearBtn" class="header-btn" disabled>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+                <span>クリア</span>
+            </button>
+            <button id="exportBtn" class="header-btn btn-primary" disabled>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+                </svg>
+                <span>PNG保存</span>
+            </button>
+        </div>
+    </header>
+
+    <div class="app-body">
+        <aside class="sidebar">
+            <div class="section">
+                <div class="section-title">レイアウト</div>
+                <div class="control-row">
+                    <label>行数</label>
+                    <div class="stepper">
+                        <button id="rowsDec" class="stepper-btn">-</button>
+                        <span id="rowsValue" class="stepper-value">2</span>
+                        <button id="rowsInc" class="stepper-btn">+</button>
+                    </div>
+                </div>
+                <div class="control-row">
+                    <label>配置</label>
+                    <select id="alignMode" class="select-input">
+                        <option value="equal-width">行幅を揃える</option>
+                        <option value="equal-height">行高さを揃える</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">間隔・背景</div>
+                <div class="control-row">
+                    <label>画像間の隙間</label>
+                    <div class="slider-group">
+                        <input type="range" id="gapSlider" min="0" max="60" value="8" class="slider">
+                        <span id="gapValue" class="slider-val">8px</span>
+                    </div>
+                </div>
+                <div class="control-row">
+                    <label>外側の余白</label>
+                    <div class="slider-group">
+                        <input type="range" id="paddingSlider" min="0" max="60" value="0" class="slider">
+                        <span id="paddingValue" class="slider-val">0px</span>
+                    </div>
+                </div>
+                <div class="control-row">
+                    <label>背景色</label>
+                    <div class="color-options">
+                        <button class="color-btn active" data-color="#ffffff" style="background:#fff" title="白"></button>
+                        <button class="color-btn" data-color="#000000" style="background:#000" title="黒"></button>
+                        <button class="color-btn" data-color="#f0f0f0" style="background:#f0f0f0" title="ライトグレー"></button>
+                        <button class="color-btn" data-color="transparent" style="background:repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%/12px 12px" title="透明"></button>
+                        <input type="color" id="customColor" class="color-input" value="#ffffff" title="カスタム">
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">出力サイズ</div>
+                <div class="control-row">
+                    <label>行の高さ</label>
+                    <div class="slider-group">
+                        <input type="range" id="rowHeightSlider" min="200" max="2000" value="800" step="50" class="slider">
+                        <span id="rowHeightValue" class="slider-val">800px</span>
+                    </div>
+                </div>
+                <div id="outputSizeInfo" class="info-text"></div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">行ごとの枚数</div>
+                <div id="rowDistribution" class="row-distribution"></div>
+            </div>
+
+            <div class="section hints">
+                <div class="section-title">ヒント</div>
+                <div class="hint-row">ドラッグで画像を並び替え</div>
+                <div class="hint-row">右クリックで画像を削除</div>
+            </div>
+        </aside>
+
+        <main class="main-area">
+            <div id="dropZone" class="drop-zone">
+                <div class="drop-zone-content">
+                    <svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+                    </svg>
+                    <p class="drop-text">画像をドラッグ&ドロップ</p>
+                    <p class="drop-subtext">または</p>
+                    <button id="fileSelectBtn" class="file-select-btn">ファイルを選択</button>
+                    <p class="drop-hint">複数選択可 / PNG, JPG, WebP, BMP</p>
+                </div>
+            </div>
+
+            <div id="imageList" class="image-list" style="display:none;"></div>
+            <div id="addMore" class="add-more" style="display:none;">
+                <button id="addMoreBtn" class="add-more-btn" title="画像を追加">
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div id="previewArea" class="preview-area" style="display:none;">
+                <div class="preview-label">プレビュー</div>
+                <canvas id="previewCanvas" class="preview-canvas"></canvas>
+            </div>
+
+            <input type="file" id="fileInput" accept="image/*" multiple style="display:none;">
+        </main>
+    </div>
+
+    <div id="processingOverlay" class="processing-overlay" style="display:none;">
+        <div class="processing-content">
+            <div class="spinner"></div>
+            <p>書き出し中...</p>
+        </div>
+    </div>
+
+    <script src="combine.js"></script>
+</body>
+</html>
