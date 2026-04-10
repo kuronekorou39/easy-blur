@@ -279,6 +279,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
                               constraints.maxHeight,
                             );
                             return GestureDetector(
+                              behavior: HitTestBehavior.opaque,
                               onPanStart: (d) => _onPanStart(d, canvasSize),
                               onPanUpdate: (d) => _onPanUpdate(d, canvasSize),
                               onPanEnd: _onPanEnd,
