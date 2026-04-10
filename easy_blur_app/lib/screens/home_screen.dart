@@ -29,11 +29,27 @@ class HomeScreen extends StatelessWidget {
     );
 
     if (!context.mounted) return;
+    final page = video
+        ? VideoEditorScreen(project: project)
+        : ImageEditorScreen(project: project);
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => video
-            ? VideoEditorScreen(project: project)
-            : ImageEditorScreen(project: project),
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => page,
+        transitionDuration: const Duration(milliseconds: 350),
+        reverseTransitionDuration: const Duration(milliseconds: 300),
+        transitionsBuilder: (_, anim, __, child) {
+          return FadeTransition(
+            opacity: CurvedAnimation(parent: anim, curve: Curves.easeOut),
+            child: SlideTransition(
+              position: Tween(
+                begin: const Offset(0.04, 0),
+                end: Offset.zero,
+              ).animate(CurvedAnimation(
+                  parent: anim, curve: Curves.easeOutCubic)),
+              child: child,
+            ),
+          );
+        },
       ),
     );
   }

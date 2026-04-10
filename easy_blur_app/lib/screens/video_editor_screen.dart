@@ -5,9 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../models/models.dart';
 import '../utils/theme.dart';
-import '../widgets/layer_panel.dart';
-import '../widgets/property_panel.dart';
-import '../widgets/timeline_panel.dart';
+import '../widgets/top_toolbar.dart';
+import '../widgets/video_editor_bottom_sheet.dart';
 
 class VideoEditorScreen extends StatefulWidget {
   final EditorProject project;
@@ -18,7 +17,8 @@ class VideoEditorScreen extends StatefulWidget {
   State<VideoEditorScreen> createState() => _VideoEditorScreenState();
 }
 
-class _VideoEditorScreenState extends State<VideoEditorScreen> {
+class _VideoEditorScreenState extends State<VideoEditorScreen>
+    with TickerProviderStateMixin {
   late EditorProject _project;
   late VideoPlayerController _videoController;
   bool _loading = true;
@@ -28,20 +28,42 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   Timer? _positionTimer;
   Size _videoSize = Size.zero;
 
+  // Viewport state
+  Offset _viewOffset = Offset.zero;
+  double _viewScale = 1.0;
+  Offset _scaleStartFocal = Offset.zero;
+  double _scaleStartScale = 1.0;
+  Offset _scaleStartOffset = Offset.zero;
+
   // Gesture state
-  Offset? _panStart;
-  Size? _resizeStart;
-  Offset? _posStart;
+  _GestureMode _gestureMode = _GestureMode.none;
+  Offset _lastFocal = Offset.zero;
+  Size? _resizeStartSize;
+  int _activeLayerIndex = -1;
+
+  // Double-tap reset
+  late final AnimationController _resetCtrl;
+  late Animation<double> _resetScale;
+  late Animation<Offset> _resetOffset;
 
   @override
   void initState() {
     super.initState();
     _project = widget.project;
+    _resetCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 300));
+    _resetCtrl.addListener(() {
+      setState(() {
+        _viewScale = _resetScale.value;
+        _viewOffset = _resetOffset.value;
+      });
+    });
     _initVideo();
   }
 
   Future<void> _initVideo() async {
-    _videoController = VideoPlayerController.file(File(_project.mediaPath));
+    _videoController =
+        VideoPlayerController.file(File(_project.mediaPath));
     await _videoController.initialize();
 
     setState(() {
@@ -54,7 +76,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       _loading = false;
     });
 
-    // Poll position
     _positionTimer = Timer.periodic(
       const Duration(milliseconds: 50),
       (_) {
@@ -71,8 +92,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   void dispose() {
     _positionTimer?.cancel();
     _videoController.dispose();
+    _resetCtrl.dispose();
     super.dispose();
   }
+
+  // --- Playback ---
 
   void _togglePlayPause() {
     setState(() {
@@ -90,10 +114,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     setState(() => _currentTime = time);
   }
 
+  // --- Layer management ---
+
   void _addLayer() {
     setState(() {
       final layer = _project.addLayer();
-      // Add initial keyframe at current time
       layer.addKeyframe(Keyframe(
         time: _currentTime,
         position: Offset(_videoSize.width / 2, _videoSize.height / 2),
@@ -139,11 +164,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   void _onIntensityChanged(double value) {
     final layer = _project.selectedLayer;
     if (layer == null || layer.keyframes.isEmpty) return;
-    // Update the keyframe closest to current time
     Keyframe? closest;
     int closestDist = 999999999;
     for (final kf in layer.keyframes) {
-      final dist = (kf.time.inMilliseconds - _currentTime.inMilliseconds).abs();
+      final dist =
+          (kf.time.inMilliseconds - _currentTime.inMilliseconds).abs();
       if (dist < closestDist) {
         closestDist = dist;
         closest = kf;
@@ -156,7 +181,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
 
   void _addKeyframeToLayer(int layerIndex) {
     final layer = _project.layers[layerIndex];
-    // Get current interpolated state and add as new keyframe
     final current = layer.getStateAt(_currentTime);
     setState(() {
       layer.addKeyframe(Keyframe(
@@ -181,10 +205,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     });
   }
 
-  Offset _toVideoCoords(Offset localPos, Size canvasSize) {
+  // --- Coordinate conversion ---
+
+  Offset _screenToVideo(Offset screenPos, Size canvasSize) {
+    final center = Offset(canvasSize.width / 2, canvasSize.height / 2);
+    final adjusted = (screenPos - center - _viewOffset) / _viewScale + center;
     return Offset(
-      localPos.dx / canvasSize.width * _videoSize.width,
-      localPos.dy / canvasSize.height * _videoSize.height,
+      adjusted.dx / canvasSize.width * _videoSize.width,
+      adjusted.dy / canvasSize.height * _videoSize.height,
     );
   }
 
@@ -202,217 +230,279 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     return -1;
   }
 
-  void _onPanStart(DragStartDetails details, Size canvasSize) {
-    final vidPos = _toVideoCoords(details.localPosition, canvasSize);
-
-    final hitIndex = _hitTestLayers(vidPos);
-    if (hitIndex < 0) return;
-
-    setState(() => _project.selectedLayerIndex = hitIndex);
-    final state = _project.layers[hitIndex].getStateAt(_currentTime);
-
+  bool _isNearCorner(Offset vidPos, Keyframe state) {
     final corners = [
-      Offset(state.position.dx + state.size.width / 2, state.position.dy + state.size.height / 2),
-      Offset(state.position.dx - state.size.width / 2, state.position.dy - state.size.height / 2),
-      Offset(state.position.dx + state.size.width / 2, state.position.dy - state.size.height / 2),
-      Offset(state.position.dx - state.size.width / 2, state.position.dy + state.size.height / 2),
+      Offset(state.position.dx + state.size.width / 2,
+          state.position.dy + state.size.height / 2),
+      Offset(state.position.dx - state.size.width / 2,
+          state.position.dy - state.size.height / 2),
+      Offset(state.position.dx + state.size.width / 2,
+          state.position.dy - state.size.height / 2),
+      Offset(state.position.dx - state.size.width / 2,
+          state.position.dy + state.size.height / 2),
     ];
-    final threshold = _videoSize.width * 0.05;
-    bool nearCorner = corners.any((c) => (vidPos - c).distance < threshold);
-
-    if (nearCorner) {
-      _resizeStart = state.size;
-      _posStart = state.position;
-      _panStart = vidPos;
-    } else {
-      _panStart = vidPos;
-      _posStart = state.position;
-      _resizeStart = null;
-    }
+    final threshold = _videoSize.shortestSide * 0.06;
+    return corners.any((c) => (vidPos - c).distance < threshold);
   }
 
-  void _onPanUpdate(DragUpdateDetails details, Size canvasSize) {
-    final layer = _project.selectedLayer;
-    if (layer == null || layer.keyframes.isEmpty || _panStart == null) return;
+  // --- Gesture handlers ---
 
-    // Find or create keyframe at current time
-    Keyframe? kf;
-    for (final k in layer.keyframes) {
-      if ((k.time.inMilliseconds - _currentTime.inMilliseconds).abs() < 100) {
-        kf = k;
-        break;
-      }
-    }
-    if (kf == null) {
-      // Auto-create keyframe at current time
-      kf = layer.getStateAt(_currentTime).copyWith(time: _currentTime);
-      layer.addKeyframe(kf);
+  void _onScaleStart(ScaleStartDetails details, Size canvasSize) {
+    _scaleStartFocal = details.focalPoint;
+    _scaleStartScale = _viewScale;
+    _scaleStartOffset = _viewOffset;
+    _lastFocal = details.focalPoint;
+
+    if (details.pointerCount >= 2) {
+      _gestureMode = _GestureMode.viewportZoom;
+      return;
     }
 
-    final vidPos = _toVideoCoords(details.localPosition, canvasSize);
+    final localPos = details.localFocalPoint;
+    final vidPos = _screenToVideo(localPos, canvasSize);
+    final hitIndex = _hitTestLayers(vidPos);
 
-    setState(() {
-      if (_resizeStart != null) {
-        final delta = vidPos - _panStart!;
-        kf!.size = Size(
-          (_resizeStart!.width + delta.dx * 2).clamp(20, _videoSize.width),
-          (_resizeStart!.height + delta.dy * 2).clamp(20, _videoSize.height),
-        );
+    if (hitIndex >= 0) {
+      _activeLayerIndex = hitIndex;
+      setState(() => _project.selectedLayerIndex = hitIndex);
+      final state = _project.layers[hitIndex].getStateAt(_currentTime);
+
+      if (_isNearCorner(vidPos, state)) {
+        _gestureMode = _GestureMode.resizeObject;
+        _resizeStartSize = state.size;
       } else {
-        final delta = vidPos - _panStart!;
-        kf!.position = _posStart! + delta;
+        _gestureMode = _GestureMode.moveObject;
       }
-    });
+    } else {
+      _gestureMode = _GestureMode.viewportPan;
+    }
   }
 
-  void _onPanEnd(DragEndDetails details) {
-    _panStart = null;
-    _resizeStart = null;
-    _posStart = null;
+  void _onScaleUpdate(ScaleUpdateDetails details, Size canvasSize) {
+    switch (_gestureMode) {
+      case _GestureMode.viewportZoom:
+        setState(() {
+          _viewScale =
+              (_scaleStartScale * details.scale).clamp(0.5, 5.0);
+          _viewOffset = _scaleStartOffset +
+              (details.focalPoint - _scaleStartFocal);
+        });
+        break;
+
+      case _GestureMode.viewportPan:
+        setState(() {
+          _viewOffset += details.focalPoint - _lastFocal;
+        });
+        break;
+
+      case _GestureMode.moveObject:
+        final layer = _project.layers[_activeLayerIndex];
+        if (layer.keyframes.isEmpty) break;
+
+        // Find or create keyframe at current time
+        Keyframe? kf;
+        for (final k in layer.keyframes) {
+          if ((k.time.inMilliseconds - _currentTime.inMilliseconds)
+                  .abs() <
+              100) {
+            kf = k;
+            break;
+          }
+        }
+        if (kf == null) {
+          kf = layer.getStateAt(_currentTime).copyWith(time: _currentTime);
+          layer.addKeyframe(kf);
+        }
+
+        final delta = details.focalPoint - _lastFocal;
+        final canvasScale = canvasSize.width / _videoSize.width;
+        final vidDelta = Offset(
+          delta.dx / (canvasScale * _viewScale),
+          delta.dy / (canvasScale * _viewScale),
+        );
+        setState(() {
+          kf!.position = Offset(
+            kf.position.dx + vidDelta.dx,
+            kf.position.dy + vidDelta.dy,
+          );
+        });
+        break;
+
+      case _GestureMode.resizeObject:
+        final layer = _project.layers[_activeLayerIndex];
+        if (layer.keyframes.isEmpty || _resizeStartSize == null) break;
+
+        Keyframe? kf;
+        for (final k in layer.keyframes) {
+          if ((k.time.inMilliseconds - _currentTime.inMilliseconds)
+                  .abs() <
+              100) {
+            kf = k;
+            break;
+          }
+        }
+        if (kf == null) {
+          kf = layer.getStateAt(_currentTime).copyWith(time: _currentTime);
+          layer.addKeyframe(kf);
+        }
+
+        final totalDelta = details.focalPoint - _scaleStartFocal;
+        final canvasScale2 = canvasSize.width / _videoSize.width;
+        final vidDelta2 = Offset(
+          totalDelta.dx / (canvasScale2 * _viewScale),
+          totalDelta.dy / (canvasScale2 * _viewScale),
+        );
+        setState(() {
+          kf!.size = Size(
+            (_resizeStartSize!.width + vidDelta2.dx * 2)
+                .clamp(20, _videoSize.width),
+            (_resizeStartSize!.height + vidDelta2.dy * 2)
+                .clamp(20, _videoSize.height),
+          );
+        });
+        break;
+
+      case _GestureMode.none:
+        break;
+    }
+    _lastFocal = details.focalPoint;
   }
+
+  void _onScaleEnd(ScaleEndDetails details) {
+    _gestureMode = _GestureMode.none;
+    _activeLayerIndex = -1;
+    _resizeStartSize = null;
+  }
+
+  void _onDoubleTap() {
+    _resetScale =
+        Tween(begin: _viewScale, end: 1.0).animate(CurvedAnimation(
+      parent: _resetCtrl,
+      curve: Curves.easeOutCubic,
+    ));
+    _resetOffset =
+        Tween(begin: _viewOffset, end: Offset.zero).animate(CurvedAnimation(
+      parent: _resetCtrl,
+      curve: Curves.easeOutCubic,
+    ));
+    _resetCtrl.forward(from: 0);
+  }
+
+  // --- Build ---
 
   @override
   Widget build(BuildContext context) {
+    final topPad = MediaQuery.of(context).padding.top;
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('動画エディタ', style: TextStyle(fontSize: 16)),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.save_rounded),
-            tooltip: '動画を書き出し',
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('動画書き出し機能は開発中です'),
-                  backgroundColor: AppTheme.accent,
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-      body: SafeArea(
-        top: false,
-        child: _loading
+      extendBodyBehindAppBar: true,
+      body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : Column(
+          : Stack(
               children: [
-                // Video canvas area
-                Expanded(
+                // Full-screen video canvas
+                Positioned.fill(
                   child: Container(
                     color: AppTheme.bgPrimary,
-                    child: Center(
-                      child: AspectRatio(
-                        aspectRatio: _videoSize.width / _videoSize.height,
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            final canvasSize = Size(
-                              constraints.maxWidth,
-                              constraints.maxHeight,
-                            );
-                            return GestureDetector(
-                              onPanStart: (d) => _onPanStart(d, canvasSize),
-                              onPanUpdate: (d) => _onPanUpdate(d, canvasSize),
-                              onPanEnd: _onPanEnd,
-                              child: Stack(
-                                children: [
-                                  // Video player
-                                  VideoPlayer(_videoController),
-                                  // Mosaic overlay
-                                  CustomPaint(
-                                    size: canvasSize,
-                                    painter: _VideoMosaicOverlayPainter(
-                                      layers: _project.layers,
-                                      currentTime: _currentTime,
-                                      mediaSize: _videoSize,
-                                      selectedLayerIndex: _project.selectedLayerIndex,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final canvasSize = Size(
+                          constraints.maxWidth,
+                          constraints.maxHeight,
+                        );
+                        return GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onScaleStart: (d) =>
+                              _onScaleStart(d, canvasSize),
+                          onScaleUpdate: (d) =>
+                              _onScaleUpdate(d, canvasSize),
+                          onScaleEnd: _onScaleEnd,
+                          onDoubleTap: _onDoubleTap,
+                          child: Center(
+                            child: Transform(
+                              transform: Matrix4.identity()
+                                ..translateByDouble(
+                                    _viewOffset.dx, _viewOffset.dy, 0, 0)
+                                ..scaleByDouble(
+                                    _viewScale, _viewScale, 1, 0),
+                              alignment: Alignment.center,
+                              child: AspectRatio(
+                                aspectRatio:
+                                    _videoSize.width / _videoSize.height,
+                                child: Stack(
+                                  children: [
+                                    VideoPlayer(_videoController),
+                                    CustomPaint(
+                                      size: canvasSize,
+                                      painter:
+                                          _VideoMosaicOverlayPainter(
+                                        layers: _project.layers,
+                                        currentTime: _currentTime,
+                                        mediaSize: _videoSize,
+                                        selectedLayerIndex:
+                                            _project.selectedLayerIndex,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            );
-                          },
-                        ),
-                      ),
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ),
 
-                // Playback controls
-                Container(
-                  color: AppTheme.bgSecondary,
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        icon: Icon(
-                          _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                          color: AppTheme.textPrimary,
-                        ),
-                        onPressed: _togglePlayPause,
-                      ),
-                      Text(
-                        '${_formatDuration(_currentTime)} / ${_formatDuration(_totalDuration)}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppTheme.textMuted,
-                          fontFeatures: [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ],
+                // Top toolbar
+                Positioned(
+                  top: topPad + 6,
+                  left: 12,
+                  right: 12,
+                  child: TopToolbar(
+                    title: '動画エディタ',
+                    onBack: () => Navigator.of(context).pop(),
+                    onAddLayer: _addLayer,
                   ),
                 ),
 
-                // Timeline
-                TimelinePanel(
-                  layers: _project.layers,
-                  selectedLayerIndex: _project.selectedLayerIndex,
+                // Bottom sheet
+                VideoEditorBottomSheet(
+                  isPlaying: _playing,
                   currentTime: _currentTime,
                   totalDuration: _totalDuration,
+                  onTogglePlay: _togglePlayPause,
                   onSeek: _seekTo,
                   onAddKeyframe: _addKeyframeToLayer,
                   onSelectKeyframe: _selectKeyframe,
                   onDeleteKeyframe: _deleteKeyframe,
-                ),
-
-                // Property panel
-                PropertyPanel(
-                  layer: _project.selectedLayer,
+                  selectedLayer: _project.selectedLayer,
                   onTypeChanged: _onTypeChanged,
                   onShapeChanged: _onShapeChanged,
                   onIntensityChanged: _onIntensityChanged,
-                ),
-
-                // Layer panel
-                LayerPanel(
                   layers: _project.layers,
                   selectedIndex: _project.selectedLayerIndex,
-                  onSelect: _selectLayer,
-                  onAdd: _addLayer,
-                  onDelete: _deleteLayer,
+                  onSelectLayer: _selectLayer,
+                  onAddLayer: _addLayer,
+                  onDeleteLayer: _deleteLayer,
                   onToggleVisibility: _toggleVisibility,
-                  onReorder: _reorderLayers,
+                  onReorderLayers: _reorderLayers,
                 ),
               ],
             ),
-      ),
     );
-  }
-
-  String _formatDuration(Duration d) {
-    final m = d.inMinutes;
-    final s = d.inSeconds % 60;
-    return '$m:${s.toString().padLeft(2, '0')}';
   }
 }
 
-/// Overlay painter for video mode - draws mosaic regions without the base image
-/// (since VideoPlayer widget handles that).
+enum _GestureMode {
+  none,
+  viewportPan,
+  viewportZoom,
+  moveObject,
+  resizeObject,
+}
+
+/// Overlay painter for video mode
 class _VideoMosaicOverlayPainter extends CustomPainter {
   final List<MosaicLayer> layers;
   final Duration currentTime;
@@ -436,13 +526,19 @@ class _VideoMosaicOverlayPainter extends CustomPainter {
       if (!layer.visible || layer.keyframes.isEmpty) continue;
 
       final state = layer.getStateAt(currentTime);
-      _drawMosaicOverlay(canvas, layer, state, scaleX, scaleY, i == selectedLayerIndex);
+      _drawMosaicOverlay(
+          canvas, size, layer, state, scaleX, scaleY, i == selectedLayerIndex);
     }
   }
 
   void _drawMosaicOverlay(
-    Canvas canvas, MosaicLayer layer, Keyframe state,
-    double scaleX, double scaleY, bool isSelected,
+    Canvas canvas,
+    Size canvasSize,
+    MosaicLayer layer,
+    Keyframe state,
+    double scaleX,
+    double scaleY,
+    bool isSelected,
   ) {
     final cx = state.position.dx * scaleX;
     final cy = state.position.dy * scaleY;
@@ -455,37 +551,42 @@ class _VideoMosaicOverlayPainter extends CustomPainter {
     canvas.rotate(state.rotation);
     canvas.translate(-cx, -cy);
 
-    // Clip to shape
     final path = Path();
     if (layer.shape == MosaicShape.ellipse) {
       path.addOval(rect);
     } else {
-      path.addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)));
+      path.addRRect(
+          RRect.fromRectAndRadius(rect, const Radius.circular(4)));
     }
     canvas.clipPath(path);
 
-    // Draw effect
     switch (layer.type) {
       case MosaicType.pixelate:
-        final blockSize = (state.intensity * scaleX * 0.5).clamp(2.0, 100.0);
+        final blockSize =
+            (state.intensity * scaleX * 0.5).clamp(2.0, 100.0);
         final paint = Paint();
         for (double y = rect.top; y < rect.bottom; y += blockSize) {
           for (double x = rect.left; x < rect.right; x += blockSize) {
             final bw = (rect.right - x).clamp(0.0, blockSize);
             final bh = (rect.bottom - y).clamp(0.0, blockSize);
-            final hash = (x ~/ blockSize * 17 + y ~/ blockSize * 31) % 255;
-            paint.color = Color.fromARGB(180, hash ~/ 2, hash ~/ 2, hash ~/ 2);
+            final hash =
+                (x ~/ blockSize * 17 + y ~/ blockSize * 31) % 255;
+            paint.color =
+                Color.fromARGB(180, hash ~/ 2, hash ~/ 2, hash ~/ 2);
             canvas.drawRect(Rect.fromLTWH(x, y, bw, bh), paint);
           }
         }
         break;
       case MosaicType.blur:
-        canvas.saveLayer(rect, Paint()
-          ..imageFilter = ui.ImageFilter.blur(
-            sigmaX: state.intensity * 0.8,
-            sigmaY: state.intensity * 0.8,
-          ));
-        canvas.drawRect(rect, Paint()..color = Colors.grey.withAlpha(100));
+        canvas.saveLayer(
+            rect,
+            Paint()
+              ..imageFilter = ui.ImageFilter.blur(
+                sigmaX: state.intensity * 0.8,
+                sigmaY: state.intensity * 0.8,
+              ));
+        canvas.drawRect(
+            rect, Paint()..color = Colors.grey.withAlpha(100));
         canvas.restore();
         break;
       case MosaicType.blackout:
@@ -495,31 +596,80 @@ class _VideoMosaicOverlayPainter extends CustomPainter {
 
     canvas.restore();
 
-    // Selection border
+    // Selection
     if (isSelected) {
-      canvas.save();
-      canvas.translate(cx, cy);
-      canvas.rotate(state.rotation);
-      canvas.translate(-cx, -cy);
+      _drawSelection(canvas, rect, state, cx, cy);
+    }
+  }
 
-      final borderPaint = Paint()
-        ..color = AppTheme.accent
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2;
-      canvas.drawRect(rect.inflate(2), borderPaint);
+  void _drawSelection(
+      Canvas canvas, Rect rect, Keyframe state, double cx, double cy) {
+    canvas.save();
+    canvas.translate(cx, cy);
+    canvas.rotate(state.rotation);
+    canvas.translate(-cx, -cy);
 
-      final handlePaint = Paint()..color = Colors.white;
-      for (final corner in [rect.topLeft, rect.topRight, rect.bottomLeft, rect.bottomRight]) {
-        canvas.drawRect(
-          Rect.fromCenter(center: corner, width: 8, height: 8),
-          handlePaint,
-        );
-        canvas.drawRect(
-          Rect.fromCenter(center: corner, width: 8, height: 8),
-          borderPaint,
-        );
-      }
-      canvas.restore();
+    const accentColor = Color(0xFF6c5ce7);
+    final borderPaint = Paint()
+      ..color = accentColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+
+    final inflated = rect.inflate(2);
+
+    // Dashed border
+    _drawDashedRect(canvas, inflated, borderPaint);
+
+    // Corner handles
+    const handleRadius = 7.0;
+    final handleFill = Paint()..color = Colors.white;
+    final handleStroke = Paint()
+      ..color = accentColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+
+    for (final corner in [
+      inflated.topLeft,
+      inflated.topRight,
+      inflated.bottomLeft,
+      inflated.bottomRight,
+    ]) {
+      canvas.drawCircle(corner, handleRadius, handleFill);
+      canvas.drawCircle(corner, handleRadius, handleStroke);
+    }
+
+    canvas.restore();
+  }
+
+  void _drawDashedRect(Canvas canvas, Rect rect, Paint paint) {
+    const dash = 6.0;
+    const gap = 4.0;
+    const total = dash + gap;
+    _drawDashedLine(canvas, rect.topLeft, rect.topRight, paint, total, dash);
+    _drawDashedLine(
+        canvas, rect.topRight, rect.bottomRight, paint, total, dash);
+    _drawDashedLine(
+        canvas, rect.bottomRight, rect.bottomLeft, paint, total, dash);
+    _drawDashedLine(
+        canvas, rect.bottomLeft, rect.topLeft, paint, total, dash);
+  }
+
+  void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint,
+      double totalDash, double dashLength) {
+    final delta = end - start;
+    final length = delta.distance;
+    if (length == 0) return;
+    final dir = Offset(delta.dx / length, delta.dy / length);
+    double drawn = 0;
+    while (drawn < length) {
+      final segEnd =
+          drawn + dashLength > length ? length : drawn + dashLength;
+      canvas.drawLine(
+        Offset(start.dx + dir.dx * drawn, start.dy + dir.dy * drawn),
+        Offset(start.dx + dir.dx * segEnd, start.dy + dir.dy * segEnd),
+        paint,
+      );
+      drawn += totalDash;
     }
   }
 

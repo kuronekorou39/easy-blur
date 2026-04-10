@@ -14,6 +14,22 @@ class AppTheme {
   static const Color accentHover = Color(0xFF7d6ff0);
   static const Color danger = Color(0xFFe74c5c);
 
+  // Glass morphism & overlay
+  static Color get surfaceGlass => bgSecondary.withValues(alpha: 0.85);
+  static const Color sheetBackground = Color(0xFF181830);
+  static const double sheetRadius = 16.0;
+  static const double toolbarRadius = 14.0;
+
+  // Handle sizes
+  static const double handleSize = 14.0;
+  static const double handleTouchArea = 28.0;
+  static const double rotateHandleDistance = 34.0;
+
+  // Animation durations
+  static const Duration animFast = Duration(milliseconds: 150);
+  static const Duration animNormal = Duration(milliseconds: 250);
+  static const Duration animSlow = Duration(milliseconds: 350);
+
   static ThemeData get darkTheme {
     return ThemeData(
       brightness: Brightness.dark,

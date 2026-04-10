@@ -24,71 +24,109 @@ class LayerPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppTheme.bgSecondary,
-        border: Border(top: BorderSide(color: AppTheme.borderColor)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Header
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
-              children: [
-                const Text(
-                  'レイヤー',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Header
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 12, 8),
+          child: Row(
+            children: [
+              const Text(
+                'レイヤー',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textMuted,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: AppTheme.bgTertiary,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${layers.length}',
+                  style: const TextStyle(
+                    fontSize: 10,
                     color: AppTheme.textMuted,
-                    letterSpacing: 0.5,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                const Spacer(),
-                _SmallIconBtn(
-                  icon: Icons.add_rounded,
-                  onTap: onAdd,
-                  tooltip: 'レイヤー追加',
-                ),
-              ],
+              ),
+              const Spacer(),
+              _AddLayerBtn(onTap: onAdd),
+            ],
+          ),
+        ),
+        // Layer list
+        if (layers.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.layers_outlined,
+                      size: 28, color: AppTheme.textMuted.withValues(alpha:0.3)),
+                  const SizedBox(height: 6),
+                  Text(
+                    'レイヤーを追加してモザイクを配置',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppTheme.textMuted.withValues(alpha:0.5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 200),
+            child: ReorderableListView.builder(
+              shrinkWrap: true,
+              buildDefaultDragHandles: false,
+              itemCount: layers.length,
+              onReorder: onReorder,
+              proxyDecorator: (child, index, animation) {
+                return AnimatedBuilder(
+                  animation: animation,
+                  builder: (context, child) {
+                    final t = Curves.easeOut.transform(animation.value);
+                    return Material(
+                      color: Colors.transparent,
+                      elevation: 8 * t,
+                      shadowColor: Colors.black54,
+                      child: Transform.scale(
+                        scale: 1.0 + 0.02 * t,
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: child,
+                );
+              },
+              itemBuilder: (context, index) {
+                final layer = layers[index];
+                final isSelected = index == selectedIndex;
+                return _LayerTile(
+                  key: ValueKey(layer.id),
+                  index: index,
+                  layer: layer,
+                  isSelected: isSelected,
+                  onTap: () => onSelect(index),
+                  onToggleVisibility: () => onToggleVisibility(index),
+                  onDelete: () => onDelete(index),
+                );
+              },
             ),
           ),
-          // Layer list
-          if (layers.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'レイヤーを追加してモザイクを配置',
-                style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
-              ),
-            )
-          else
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 180),
-              child: ReorderableListView.builder(
-                shrinkWrap: true,
-                buildDefaultDragHandles: false,
-                itemCount: layers.length,
-                onReorder: onReorder,
-                itemBuilder: (context, index) {
-                  final layer = layers[index];
-                  final isSelected = index == selectedIndex;
-                  return _LayerTile(
-                    key: ValueKey(layer.id),
-                    index: index,
-                    layer: layer,
-                    isSelected: isSelected,
-                    onTap: () => onSelect(index),
-                    onToggleVisibility: () => onToggleVisibility(index),
-                    onDelete: () => onDelete(index),
-                  );
-                },
-              ),
-            ),
-        ],
-      ),
+      ],
     );
   }
 }
@@ -124,55 +162,89 @@ class _LayerTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ReorderableDragStartListener(
-      index: index,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: isSelected
-                ? AppTheme.accent.withAlpha(20)
-                : Colors.transparent,
-            border: Border(
-              left: BorderSide(
-                color: isSelected ? AppTheme.accent : Colors.transparent,
-                width: 3,
-              ),
-              bottom: const BorderSide(color: AppTheme.borderColor, width: 0.5),
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(_typeIcon, size: 16, color: AppTheme.textMuted),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  layer.name,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: isSelected
-                        ? AppTheme.textPrimary
-                        : AppTheme.textSecondary,
-                    fontWeight:
-                        isSelected ? FontWeight.w600 : FontWeight.normal,
-                  ),
-                  overflow: TextOverflow.ellipsis,
+    return Dismissible(
+      key: ValueKey('dismiss_${layer.id}'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        color: AppTheme.danger.withValues(alpha:0.2),
+        child: const Icon(Icons.delete_rounded,
+            color: AppTheme.danger, size: 20),
+      ),
+      confirmDismiss: (_) async => true,
+      onDismissed: (_) => onDelete(),
+      child: ReorderableDragStartListener(
+        index: index,
+        child: GestureDetector(
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: AppTheme.animFast,
+            curve: Curves.easeOutCubic,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? AppTheme.accent.withAlpha(20)
+                  : Colors.transparent,
+              border: Border(
+                left: BorderSide(
+                  color: isSelected ? AppTheme.accent : Colors.transparent,
+                  width: 3,
                 ),
+                bottom:
+                    const BorderSide(color: AppTheme.borderColor, width: 0.5),
               ),
-              _SmallIconBtn(
-                icon: layer.visible
-                    ? Icons.visibility_outlined
-                    : Icons.visibility_off_outlined,
-                onTap: onToggleVisibility,
-                color: layer.visible ? AppTheme.textMuted : AppTheme.danger,
-              ),
-              _SmallIconBtn(
-                icon: Icons.close_rounded,
-                onTap: onDelete,
-                color: AppTheme.textMuted,
-              ),
-            ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? AppTheme.accent.withAlpha(25)
+                        : AppTheme.bgTertiary,
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: Icon(_typeIcon,
+                      size: 14,
+                      color: isSelected
+                          ? AppTheme.accent
+                          : AppTheme.textMuted),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    layer.name,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: isSelected
+                          ? AppTheme.textPrimary
+                          : AppTheme.textSecondary,
+                      fontWeight:
+                          isSelected ? FontWeight.w600 : FontWeight.normal,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: onToggleVisibility,
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding: const EdgeInsets.all(6),
+                    child: Icon(
+                      layer.visible
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                      size: 18,
+                      color: layer.visible
+                          ? AppTheme.textMuted
+                          : AppTheme.danger.withValues(alpha:0.7),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -180,29 +252,64 @@ class _LayerTile extends StatelessWidget {
   }
 }
 
-class _SmallIconBtn extends StatelessWidget {
-  final IconData icon;
+class _AddLayerBtn extends StatefulWidget {
   final VoidCallback onTap;
-  final String? tooltip;
-  final Color color;
+  const _AddLayerBtn({required this.onTap});
 
-  const _SmallIconBtn({
-    required this.icon,
-    required this.onTap,
-    this.tooltip,
-    this.color = AppTheme.textSecondary,
-  });
+  @override
+  State<_AddLayerBtn> createState() => _AddLayerBtnState();
+}
+
+class _AddLayerBtnState extends State<_AddLayerBtn>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 100));
+    _scale = Tween(begin: 1.0, end: 0.88).animate(
+        CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip ?? '',
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(6),
-        child: Padding(
-          padding: const EdgeInsets.all(4),
-          child: Icon(icon, size: 18, color: color),
+    return GestureDetector(
+      onTapDown: (_) => _ctrl.forward(),
+      onTapUp: (_) {
+        _ctrl.reverse();
+        widget.onTap();
+      },
+      onTapCancel: () => _ctrl.reverse(),
+      child: ScaleTransition(
+        scale: _scale,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: AppTheme.accent.withAlpha(20),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppTheme.accent.withAlpha(60)),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.add_rounded, size: 14, color: AppTheme.accent),
+              SizedBox(width: 2),
+              Text('追加',
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: AppTheme.accent,
+                      fontWeight: FontWeight.w600)),
+            ],
+          ),
         ),
       ),
     );

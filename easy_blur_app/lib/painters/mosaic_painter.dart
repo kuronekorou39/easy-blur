@@ -22,7 +22,6 @@ class MosaicPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (mediaImage == null) return;
 
-    // Draw media (image/video frame)
     final src = Rect.fromLTWH(
       0, 0,
       mediaImage!.width.toDouble(),
@@ -31,7 +30,6 @@ class MosaicPainter extends CustomPainter {
     final dst = Rect.fromLTWH(0, 0, size.width, size.height);
     canvas.drawImageRect(mediaImage!, src, dst, Paint());
 
-    // Draw each visible layer's mosaic
     final scaleX = size.width / mediaSize.width;
     final scaleY = size.height / mediaSize.height;
 
@@ -96,24 +94,20 @@ class MosaicPainter extends CustomPainter {
 
     canvas.restore();
 
-    // Draw selection handle
     if (isSelected) {
-      _drawSelectionBorder(canvas, rect, state, cx, cy);
+      _drawSelection(canvas, rect, state, cx, cy);
     }
   }
 
-  void _drawPixelate(Canvas canvas, Rect rect, double intensity, double scale) {
+  void _drawPixelate(
+      Canvas canvas, Rect rect, double intensity, double scale) {
     final blockSize = max(2.0, intensity * scale * 0.5);
     final paint = Paint();
 
-    // Simplified pixelation: draw colored blocks
-    // In a real implementation, we'd sample from the media image
-    // For now, fill with semi-transparent overlay to indicate mosaic area
     for (double y = rect.top; y < rect.bottom; y += blockSize) {
       for (double x = rect.left; x < rect.right; x += blockSize) {
         final bw = min(blockSize, rect.right - x);
         final bh = min(blockSize, rect.bottom - y);
-        // Use a hash-based color to simulate pixelation visually
         final hash = (x ~/ blockSize * 17 + y ~/ blockSize * 31) % 255;
         paint.color = Color.fromARGB(180, hash ~/ 2, hash ~/ 2, hash ~/ 2);
         canvas.drawRect(Rect.fromLTWH(x, y, bw, bh), paint);
@@ -121,7 +115,8 @@ class MosaicPainter extends CustomPainter {
     }
   }
 
-  void _drawBlur(Canvas canvas, Rect rect, double intensity, Size canvasSize) {
+  void _drawBlur(
+      Canvas canvas, Rect rect, double intensity, Size canvasSize) {
     final sigma = max(1.0, intensity * 0.8);
     final paint = Paint()
       ..imageFilter = ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma);
@@ -138,42 +133,137 @@ class MosaicPainter extends CustomPainter {
     canvas.restore();
   }
 
-  void _drawSelectionBorder(
-    Canvas canvas, Rect rect, Keyframe state, double cx, double cy,
+  void _drawSelection(
+    Canvas canvas,
+    Rect rect,
+    Keyframe state,
+    double cx,
+    double cy,
   ) {
     canvas.save();
     canvas.translate(cx, cy);
     canvas.rotate(state.rotation);
     canvas.translate(-cx, -cy);
 
+    const accentColor = Color(0xFF6c5ce7);
+
+    // Dashed border
     final borderPaint = Paint()
-      ..color = const Color(0xFF6c5ce7)
+      ..color = accentColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+
+    final inflated = rect.inflate(2);
+    _drawDashedRect(canvas, inflated, borderPaint, dashLength: 6, gapLength: 4);
+
+    // Corner handles (larger, rounded)
+    const handleRadius = 7.0;
+    final handleFill = Paint()..color = Colors.white;
+    final handleStroke = Paint()
+      ..color = accentColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.0;
 
-    canvas.drawRect(rect.inflate(2), borderPaint);
-
-    // Corner handles
-    final handlePaint = Paint()..color = Colors.white;
-    const handleSize = 8.0;
     final corners = [
-      rect.topLeft,
-      rect.topRight,
-      rect.bottomLeft,
-      rect.bottomRight,
+      inflated.topLeft,
+      inflated.topRight,
+      inflated.bottomLeft,
+      inflated.bottomRight,
     ];
     for (final corner in corners) {
-      canvas.drawRect(
-        Rect.fromCenter(center: corner, width: handleSize, height: handleSize),
-        handlePaint,
-      );
-      canvas.drawRect(
-        Rect.fromCenter(center: corner, width: handleSize, height: handleSize),
-        borderPaint,
-      );
+      canvas.drawCircle(corner, handleRadius, handleFill);
+      canvas.drawCircle(corner, handleRadius, handleStroke);
     }
 
+    // Edge midpoint handles (smaller)
+    const edgeRadius = 4.0;
+    final edges = [
+      Offset(inflated.center.dx, inflated.top),
+      Offset(inflated.center.dx, inflated.bottom),
+      Offset(inflated.left, inflated.center.dy),
+      Offset(inflated.right, inflated.center.dy),
+    ];
+    for (final edge in edges) {
+      canvas.drawCircle(edge, edgeRadius, handleFill);
+      canvas.drawCircle(edge, edgeRadius, handleStroke);
+    }
+
+    // Rotation handle (top center, connected by line)
+    final rotateAnchor = Offset(inflated.center.dx, inflated.top);
+    final rotateHandle =
+        Offset(inflated.center.dx, inflated.top - 30);
+
+    canvas.drawLine(
+      rotateAnchor,
+      rotateHandle,
+      Paint()
+        ..color = accentColor.withAlpha(150)
+        ..strokeWidth = 1.5,
+    );
+
+    canvas.drawCircle(rotateHandle, 8, handleFill);
+    canvas.drawCircle(rotateHandle, 8, handleStroke);
+
+    // Rotation icon inside handle
+    final iconPaint = Paint()
+      ..color = accentColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    final iconCenter = rotateHandle;
+    const iconR = 4.0;
+    final iconRect =
+        Rect.fromCircle(center: iconCenter, radius: iconR);
+    canvas.drawArc(iconRect, -pi / 2, pi * 1.4, false, iconPaint);
+    // Arrow tip
+    final arrowEnd = Offset(
+      iconCenter.dx + iconR * cos(-pi / 2 + pi * 1.4),
+      iconCenter.dy + iconR * sin(-pi / 2 + pi * 1.4),
+    );
+    final arrowDir = pi * 1.4 - pi / 2 + pi / 2;
+    canvas.drawLine(
+      arrowEnd,
+      Offset(arrowEnd.dx + 3 * cos(arrowDir - 0.6),
+          arrowEnd.dy + 3 * sin(arrowDir - 0.6)),
+      iconPaint,
+    );
+
     canvas.restore();
+  }
+
+  void _drawDashedRect(
+      Canvas canvas, Rect rect, Paint paint,
+      {double dashLength = 6, double gapLength = 4}) {
+    final totalDash = dashLength + gapLength;
+    // Top
+    _drawDashedLine(canvas, rect.topLeft, rect.topRight, paint, totalDash,
+        dashLength);
+    // Right
+    _drawDashedLine(canvas, rect.topRight, rect.bottomRight, paint,
+        totalDash, dashLength);
+    // Bottom
+    _drawDashedLine(canvas, rect.bottomRight, rect.bottomLeft, paint,
+        totalDash, dashLength);
+    // Left
+    _drawDashedLine(canvas, rect.bottomLeft, rect.topLeft, paint,
+        totalDash, dashLength);
+  }
+
+  void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint,
+      double totalDash, double dashLength) {
+    final delta = end - start;
+    final length = delta.distance;
+    final dir = Offset(delta.dx / length, delta.dy / length);
+    double drawn = 0;
+    while (drawn < length) {
+      final segEnd = min(drawn + dashLength, length);
+      canvas.drawLine(
+        Offset(start.dx + dir.dx * drawn, start.dy + dir.dy * drawn),
+        Offset(start.dx + dir.dx * segEnd, start.dy + dir.dy * segEnd),
+        paint,
+      );
+      drawn += totalDash;
+    }
   }
 
   @override

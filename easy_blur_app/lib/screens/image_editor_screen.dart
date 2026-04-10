@@ -6,8 +6,8 @@ import 'package:path/path.dart' as p;
 import '../models/models.dart';
 import '../painters/mosaic_painter.dart';
 import '../utils/theme.dart';
-import '../widgets/layer_panel.dart';
-import '../widgets/property_panel.dart';
+import '../widgets/editor_bottom_sheet.dart';
+import '../widgets/top_toolbar.dart';
 
 class ImageEditorScreen extends StatefulWidget {
   final EditorProject project;
@@ -18,7 +18,8 @@ class ImageEditorScreen extends StatefulWidget {
   State<ImageEditorScreen> createState() => _ImageEditorScreenState();
 }
 
-class _ImageEditorScreenState extends State<ImageEditorScreen> {
+class _ImageEditorScreenState extends State<ImageEditorScreen>
+    with TickerProviderStateMixin {
   late EditorProject _project;
   ui.Image? _uiImage;
   Size _imageSize = Size.zero;
@@ -26,16 +27,43 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
   bool _saving = false;
   final GlobalKey _canvasKey = GlobalKey();
 
+  // Viewport state
+  Offset _viewOffset = Offset.zero;
+  double _viewScale = 1.0;
+  Offset _scaleStartFocal = Offset.zero;
+  double _scaleStartScale = 1.0;
+  Offset _scaleStartOffset = Offset.zero;
+
   // Gesture state
-  Offset? _panStart;
-  Size? _resizeStart;
-  Offset? _posStart;
+  _GestureMode _gestureMode = _GestureMode.none;
+  Offset _lastFocal = Offset.zero;
+  Size? _resizeStartSize;
+  int _activeLayerIndex = -1;
+
+  // Double-tap reset animation
+  late final AnimationController _resetCtrl;
+  late Animation<double> _resetScale;
+  late Animation<Offset> _resetOffset;
 
   @override
   void initState() {
     super.initState();
     _project = widget.project;
+    _resetCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 300));
+    _resetCtrl.addListener(() {
+      setState(() {
+        _viewScale = _resetScale.value;
+        _viewOffset = _resetOffset.value;
+      });
+    });
     _loadImage();
+  }
+
+  @override
+  void dispose() {
+    _resetCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadImage() async {
@@ -53,10 +81,11 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
     });
   }
 
+  // --- Layer management ---
+
   void _addLayer() {
     setState(() {
       final layer = _project.addLayer();
-      // Add a default keyframe at center
       layer.addKeyframe(Keyframe(
         time: Duration.zero,
         position: Offset(_imageSize.width / 2, _imageSize.height / 2),
@@ -105,15 +134,18 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
     setState(() => layer.keyframes.first.intensity = value);
   }
 
-  // Canvas coordinate conversion
-  Offset _toImageCoords(Offset localPos, Size canvasSize) {
+  // --- Coordinate conversion ---
+
+  Offset _screenToImage(Offset screenPos, Size canvasSize) {
+    // Reverse viewport transform, then map to image coords
+    final center = Offset(canvasSize.width / 2, canvasSize.height / 2);
+    final adjusted = (screenPos - center - _viewOffset) / _viewScale + center;
     return Offset(
-      localPos.dx / canvasSize.width * _imageSize.width,
-      localPos.dy / canvasSize.height * _imageSize.height,
+      adjusted.dx / canvasSize.width * _imageSize.width,
+      adjusted.dy / canvasSize.height * _imageSize.height,
     );
   }
 
-  /// Hit-test all layers top-down and return the index of the hit layer, or -1.
   int _hitTestLayers(Offset imgPos) {
     for (int i = _project.layers.length - 1; i >= 0; i--) {
       final layer = _project.layers[i];
@@ -128,74 +160,146 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
     return -1;
   }
 
-  void _onPanStart(DragStartDetails details, Size canvasSize) {
-    final imgPos = _toImageCoords(details.localPosition, canvasSize);
-
-    // Auto-select layer under finger
-    final hitIndex = _hitTestLayers(imgPos);
-    if (hitIndex < 0) return;
-
-    setState(() => _project.selectedLayerIndex = hitIndex);
-    final kf = _project.layers[hitIndex].keyframes.first;
-
-    // Check if near corner for resize
+  bool _isNearCorner(Offset imgPos, Keyframe kf) {
     final corners = [
-      Offset(kf.position.dx + kf.size.width / 2, kf.position.dy + kf.size.height / 2),
-      Offset(kf.position.dx - kf.size.width / 2, kf.position.dy - kf.size.height / 2),
-      Offset(kf.position.dx + kf.size.width / 2, kf.position.dy - kf.size.height / 2),
-      Offset(kf.position.dx - kf.size.width / 2, kf.position.dy + kf.size.height / 2),
+      Offset(kf.position.dx + kf.size.width / 2,
+          kf.position.dy + kf.size.height / 2),
+      Offset(kf.position.dx - kf.size.width / 2,
+          kf.position.dy - kf.size.height / 2),
+      Offset(kf.position.dx + kf.size.width / 2,
+          kf.position.dy - kf.size.height / 2),
+      Offset(kf.position.dx - kf.size.width / 2,
+          kf.position.dy + kf.size.height / 2),
     ];
-    final threshold = _imageSize.width * 0.05;
-    bool nearCorner = corners.any((c) => (imgPos - c).distance < threshold);
+    final threshold = _imageSize.shortestSide * 0.06;
+    return corners.any((c) => (imgPos - c).distance < threshold);
+  }
 
-    if (nearCorner) {
-      _resizeStart = kf.size;
-      _posStart = kf.position;
-      _panStart = imgPos;
+  // --- Gesture handlers ---
+
+  void _onScaleStart(ScaleStartDetails details, Size canvasSize) {
+    _scaleStartFocal = details.focalPoint;
+    _scaleStartScale = _viewScale;
+    _scaleStartOffset = _viewOffset;
+    _lastFocal = details.focalPoint;
+
+    if (details.pointerCount >= 2) {
+      _gestureMode = _GestureMode.viewportZoom;
+      return;
+    }
+
+    // Single finger: try to hit a layer
+    final localPos = details.localFocalPoint;
+    final imgPos = _screenToImage(localPos, canvasSize);
+    final hitIndex = _hitTestLayers(imgPos);
+
+    if (hitIndex >= 0) {
+      _activeLayerIndex = hitIndex;
+      setState(() => _project.selectedLayerIndex = hitIndex);
+      final kf = _project.layers[hitIndex].keyframes.first;
+
+      if (_isNearCorner(imgPos, kf)) {
+        _gestureMode = _GestureMode.resizeObject;
+        _resizeStartSize = kf.size;
+      } else {
+        _gestureMode = _GestureMode.moveObject;
+      }
     } else {
-      _panStart = imgPos;
-      _posStart = kf.position;
-      _resizeStart = null;
+      _gestureMode = _GestureMode.viewportPan;
     }
   }
 
-  void _onPanUpdate(DragUpdateDetails details, Size canvasSize) {
-    final layer = _project.selectedLayer;
-    if (layer == null || layer.keyframes.isEmpty || _panStart == null) return;
-    final kf = layer.keyframes.first;
-    final imgPos = _toImageCoords(details.localPosition, canvasSize);
+  void _onScaleUpdate(ScaleUpdateDetails details, Size canvasSize) {
+    switch (_gestureMode) {
+      case _GestureMode.viewportZoom:
+        setState(() {
+          _viewScale = (_scaleStartScale * details.scale).clamp(0.5, 5.0);
+          _viewOffset = _scaleStartOffset +
+              (details.focalPoint - _scaleStartFocal);
+        });
+        break;
 
-    setState(() {
-      if (_resizeStart != null) {
-        // Resize
-        final delta = imgPos - _panStart!;
-        kf.size = Size(
-          (_resizeStart!.width + delta.dx * 2).clamp(20, _imageSize.width),
-          (_resizeStart!.height + delta.dy * 2).clamp(20, _imageSize.height),
+      case _GestureMode.viewportPan:
+        setState(() {
+          _viewOffset += details.focalPoint - _lastFocal;
+        });
+        break;
+
+      case _GestureMode.moveObject:
+        final layer = _project.layers[_activeLayerIndex];
+        if (layer.keyframes.isEmpty) break;
+        final kf = layer.keyframes.first;
+        // Relative movement: delta in image coordinates
+        final delta = details.focalPoint - _lastFocal;
+        final canvasScale =
+            canvasSize.width / _imageSize.width;
+        final imgDelta = Offset(
+          delta.dx / (canvasScale * _viewScale),
+          delta.dy / (canvasScale * _viewScale),
         );
-      } else {
-        // Move
-        final delta = imgPos - _panStart!;
-        kf.position = _posStart! + delta;
-      }
-    });
+        setState(() {
+          kf.position = Offset(
+            kf.position.dx + imgDelta.dx,
+            kf.position.dy + imgDelta.dy,
+          );
+        });
+        break;
+
+      case _GestureMode.resizeObject:
+        final layer = _project.layers[_activeLayerIndex];
+        if (layer.keyframes.isEmpty || _resizeStartSize == null) break;
+        final kf = layer.keyframes.first;
+        final totalDelta = details.focalPoint - _scaleStartFocal;
+        final canvasScale = canvasSize.width / _imageSize.width;
+        final imgDelta = Offset(
+          totalDelta.dx / (canvasScale * _viewScale),
+          totalDelta.dy / (canvasScale * _viewScale),
+        );
+        setState(() {
+          kf.size = Size(
+            (_resizeStartSize!.width + imgDelta.dx * 2)
+                .clamp(20, _imageSize.width),
+            (_resizeStartSize!.height + imgDelta.dy * 2)
+                .clamp(20, _imageSize.height),
+          );
+        });
+        break;
+
+      case _GestureMode.none:
+        break;
+    }
+    _lastFocal = details.focalPoint;
   }
 
-  void _onPanEnd(DragEndDetails details) {
-    _panStart = null;
-    _resizeStart = null;
-    _posStart = null;
+  void _onScaleEnd(ScaleEndDetails details) {
+    _gestureMode = _GestureMode.none;
+    _activeLayerIndex = -1;
+    _resizeStartSize = null;
   }
+
+  void _onDoubleTap() {
+    _resetScale =
+        Tween(begin: _viewScale, end: 1.0).animate(CurvedAnimation(
+      parent: _resetCtrl,
+      curve: Curves.easeOutCubic,
+    ));
+    _resetOffset =
+        Tween(begin: _viewOffset, end: Offset.zero).animate(CurvedAnimation(
+      parent: _resetCtrl,
+      curve: Curves.easeOutCubic,
+    ));
+    _resetCtrl.forward(from: 0);
+  }
+
+  // --- Save ---
 
   Future<void> _saveImage() async {
     if (_uiImage == null) return;
     setState(() => _saving = true);
 
     try {
-      // Render at original resolution
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
-
       final painter = MosaicPainter(
         mediaImage: _uiImage,
         layers: _project.layers,
@@ -215,8 +319,10 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
 
       final dir = await getApplicationDocumentsDirectory();
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final originalName = p.basenameWithoutExtension(_project.mediaPath);
-      final outPath = p.join(dir.path, '${originalName}_mosaic_$timestamp.png');
+      final originalName =
+          p.basenameWithoutExtension(_project.mediaPath);
+      final outPath =
+          p.join(dir.path, '${originalName}_mosaic_$timestamp.png');
       final outFile = File(outPath);
       await outFile.writeAsBytes(byteData.buffer.asUint8List());
 
@@ -225,6 +331,10 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
           SnackBar(
             content: Text('保存完了: ${p.basename(outPath)}'),
             backgroundColor: AppTheme.accent,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10)),
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 80),
           ),
         );
       }
@@ -234,6 +344,9 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
           SnackBar(
             content: Text('保存失敗: $e'),
             backgroundColor: AppTheme.danger,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10)),
           ),
         );
       }
@@ -242,99 +355,107 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
     }
   }
 
+  // --- Build ---
+
   @override
   Widget build(BuildContext context) {
+    final topPad = MediaQuery.of(context).padding.top;
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('画像エディタ', style: TextStyle(fontSize: 16)),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.save_rounded),
-            tooltip: 'PNG保存',
-            onPressed: _saving ? null : _saveImage,
-          ),
-        ],
-      ),
-      body: SafeArea(
-        top: false,
-        child: _loading
+      extendBodyBehindAppBar: true,
+      body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : Column(
+          : Stack(
               children: [
-                // Canvas area
-                Expanded(
+                // Full-screen canvas
+                Positioned.fill(
                   child: Container(
                     color: AppTheme.bgPrimary,
-                    child: Center(
-                      child: AspectRatio(
-                        aspectRatio: _imageSize.width / _imageSize.height,
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            final canvasSize = Size(
-                              constraints.maxWidth,
-                              constraints.maxHeight,
-                            );
-                            return GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onPanStart: (d) => _onPanStart(d, canvasSize),
-                              onPanUpdate: (d) => _onPanUpdate(d, canvasSize),
-                              onPanEnd: _onPanEnd,
-                              child: RepaintBoundary(
-                                key: _canvasKey,
-                                child: CustomPaint(
-                                  size: canvasSize,
-                                  painter: MosaicPainter(
-                                    mediaImage: _uiImage,
-                                    layers: _project.layers,
-                                    currentTime: Duration.zero,
-                                    mediaSize: _imageSize,
-                                    selectedLayerIndex: _project.selectedLayerIndex,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final canvasSize = Size(
+                          constraints.maxWidth,
+                          constraints.maxHeight,
+                        );
+                        return GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onScaleStart: (d) =>
+                              _onScaleStart(d, canvasSize),
+                          onScaleUpdate: (d) =>
+                              _onScaleUpdate(d, canvasSize),
+                          onScaleEnd: _onScaleEnd,
+                          onDoubleTap: _onDoubleTap,
+                          child: Center(
+                            child: Transform(
+                              transform: Matrix4.identity()
+                                ..translateByDouble(
+                                    _viewOffset.dx, _viewOffset.dy, 0, 0)
+                                ..scaleByDouble(_viewScale, _viewScale, 1, 0),
+                              alignment: Alignment.center,
+                              child: AspectRatio(
+                                aspectRatio:
+                                    _imageSize.width / _imageSize.height,
+                                child: RepaintBoundary(
+                                  key: _canvasKey,
+                                  child: CustomPaint(
+                                    size: canvasSize,
+                                    painter: MosaicPainter(
+                                      mediaImage: _uiImage,
+                                      layers: _project.layers,
+                                      currentTime: Duration.zero,
+                                      mediaSize: _imageSize,
+                                      selectedLayerIndex:
+                                          _project.selectedLayerIndex,
+                                    ),
                                   ),
                                 ),
                               ),
-                            );
-                          },
-                        ),
-                      ),
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ),
 
-                // Property panel
-                PropertyPanel(
-                  layer: _project.selectedLayer,
+                // Top toolbar
+                Positioned(
+                  top: topPad + 6,
+                  left: 12,
+                  right: 12,
+                  child: TopToolbar(
+                    title: '画像エディタ',
+                    onBack: () => Navigator.of(context).pop(),
+                    onAddLayer: _addLayer,
+                    onSave: _saveImage,
+                    isSaving: _saving,
+                  ),
+                ),
+
+                // Bottom sheet
+                EditorBottomSheet(
+                  selectedLayer: _project.selectedLayer,
+                  layers: _project.layers,
+                  selectedIndex: _project.selectedLayerIndex,
                   onTypeChanged: _onTypeChanged,
                   onShapeChanged: _onShapeChanged,
                   onIntensityChanged: _onIntensityChanged,
-                ),
-
-                // Layer panel
-                LayerPanel(
-                  layers: _project.layers,
-                  selectedIndex: _project.selectedLayerIndex,
-                  onSelect: _selectLayer,
-                  onAdd: _addLayer,
-                  onDelete: _deleteLayer,
+                  onSelectLayer: _selectLayer,
+                  onAddLayer: _addLayer,
+                  onDeleteLayer: _deleteLayer,
                   onToggleVisibility: _toggleVisibility,
-                  onReorder: _reorderLayers,
+                  onReorderLayers: _reorderLayers,
                 ),
               ],
             ),
-      ),
-
-      // Saving overlay
-      floatingActionButton: _saving
-          ? Container(
-              color: Colors.black45,
-              child: const Center(
-                child: CircularProgressIndicator(color: AppTheme.accent),
-              ),
-            )
-          : null,
     );
   }
+}
+
+enum _GestureMode {
+  none,
+  viewportPan,
+  viewportZoom,
+  moveObject,
+  resizeObject,
 }

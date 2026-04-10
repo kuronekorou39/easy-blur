@@ -29,62 +29,54 @@ class TimelinePanel extends StatelessWidget {
     final totalMs = totalDuration.inMilliseconds.toDouble();
     if (totalMs <= 0) return const SizedBox.shrink();
 
-    return Container(
-      height: 56 + layers.length * 36.0,
-      constraints: const BoxConstraints(maxHeight: 250),
-      decoration: const BoxDecoration(
-        color: AppTheme.bgSecondary,
-        border: Border(top: BorderSide(color: AppTheme.borderColor)),
-      ),
-      child: Column(
-        children: [
-          // Time ruler + scrubber
-          SizedBox(
-            height: 32,
-            child: GestureDetector(
-              onHorizontalDragUpdate: (d) {
-                final box = context.findRenderObject() as RenderBox;
-                final w = box.size.width - 80; // label width offset
-                final ratio = ((d.localPosition.dx - 80) / w).clamp(0.0, 1.0);
-                onSeek(Duration(milliseconds: (ratio * totalMs).round()));
-              },
-              onTapDown: (d) {
-                final box = context.findRenderObject() as RenderBox;
-                final w = box.size.width - 80;
-                final ratio = ((d.localPosition.dx - 80) / w).clamp(0.0, 1.0);
-                onSeek(Duration(milliseconds: (ratio * totalMs).round()));
-              },
-              child: CustomPaint(
-                size: Size.infinite,
-                painter: _TimeRulerPainter(
-                  currentTime: currentTime,
-                  totalDuration: totalDuration,
-                  labelOffset: 80,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Time ruler + scrubber
+        SizedBox(
+          height: 32,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final trackWidth = constraints.maxWidth - 80;
+              return GestureDetector(
+                onHorizontalDragUpdate: (d) {
+                  final ratio =
+                      ((d.localPosition.dx - 80) / trackWidth).clamp(0.0, 1.0);
+                  onSeek(Duration(milliseconds: (ratio * totalMs).round()));
+                },
+                onTapDown: (d) {
+                  final ratio =
+                      ((d.localPosition.dx - 80) / trackWidth).clamp(0.0, 1.0);
+                  onSeek(Duration(milliseconds: (ratio * totalMs).round()));
+                },
+                child: CustomPaint(
+                  size: Size.infinite,
+                  painter: _TimeRulerPainter(
+                    currentTime: currentTime,
+                    totalDuration: totalDuration,
+                    labelOffset: 80,
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
-          const Divider(height: 1, color: AppTheme.borderColor),
-          // Layer tracks
-          Expanded(
-            child: ListView.builder(
-              itemCount: layers.length,
-              itemBuilder: (context, index) {
-                return _LayerTrack(
-                  layer: layers[index],
-                  layerIndex: index,
-                  isSelected: index == selectedLayerIndex,
-                  currentTime: currentTime,
-                  totalDuration: totalDuration,
-                  onAddKeyframe: () => onAddKeyframe(index),
-                  onSelectKeyframe: (ki) => onSelectKeyframe(index, ki),
-                  onDeleteKeyframe: (ki) => onDeleteKeyframe(index, ki),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
+        ),
+        const Divider(height: 1, color: AppTheme.borderColor),
+        // Layer tracks (not in Expanded - uses intrinsic height)
+        ...layers.asMap().entries.map((entry) {
+          final index = entry.key;
+          return _LayerTrack(
+            layer: entry.value,
+            layerIndex: index,
+            isSelected: index == selectedLayerIndex,
+            currentTime: currentTime,
+            totalDuration: totalDuration,
+            onAddKeyframe: () => onAddKeyframe(index),
+            onSelectKeyframe: (ki) => onSelectKeyframe(index, ki),
+            onDeleteKeyframe: (ki) => onDeleteKeyframe(index, ki),
+          );
+        }),
+      ],
     );
   }
 }
