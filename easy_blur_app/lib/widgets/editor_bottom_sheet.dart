@@ -14,6 +14,7 @@ class EditorBottomSheet extends StatefulWidget {
   final int selectedIndex;
   final ValueChanged<MosaicType> onTypeChanged;
   final ValueChanged<MosaicShape> onShapeChanged;
+  final ValueChanged<bool> onInvertedChanged;
   final ValueChanged<double> onIntensityChanged;
   final ValueChanged<int> onSelectLayer;
   final VoidCallback onAddLayer;
@@ -39,6 +40,7 @@ class EditorBottomSheet extends StatefulWidget {
     required this.selectedIndex,
     required this.onTypeChanged,
     required this.onShapeChanged,
+    required this.onInvertedChanged,
     required this.onIntensityChanged,
     required this.onSelectLayer,
     required this.onAddLayer,
@@ -167,6 +169,7 @@ class _EditorBottomSheetState extends State<EditorBottomSheet>
                           onReorder: widget.onReorderLayers,
                           onTypeChanged: widget.onTypeChanged,
                           onShapeChanged: widget.onShapeChanged,
+                          onInvertedChanged: widget.onInvertedChanged,
                           onIntensityChanged: widget.onIntensityChanged,
                           showTimeRange: widget.showTimeRange,
                           currentTime: widget.currentTime,

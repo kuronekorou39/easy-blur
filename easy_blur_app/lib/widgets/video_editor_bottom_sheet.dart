@@ -172,6 +172,7 @@ class _VideoEditorBottomSheetState extends State<VideoEditorBottomSheet> {
                       onReorder: widget.onReorderLayers,
                       onTypeChanged: widget.onTypeChanged,
                       onShapeChanged: widget.onShapeChanged,
+                      onInvertedChanged: (_) {},
                       onIntensityChanged: widget.onIntensityChanged,
                     ),
                   ),

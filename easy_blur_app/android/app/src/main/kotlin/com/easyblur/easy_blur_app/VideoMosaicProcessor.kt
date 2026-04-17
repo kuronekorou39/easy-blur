@@ -65,6 +65,8 @@ class VideoMosaicProcessor {
                 "pixelate" -> MosaicType.PIXELATE
                 "blur" -> MosaicType.BLUR
                 "blackout" -> MosaicType.BLACKOUT
+                "whiteout" -> MosaicType.WHITEOUT
+                "noise" -> MosaicType.NOISE
                 else -> MosaicType.PIXELATE
             }
             val shape = when (obj.getString("shape")) {
@@ -90,6 +92,7 @@ class VideoMosaicProcessor {
                 LayerParam(
                     type = type,
                     shape = shape,
+                    inverted = obj.optBoolean("inverted", false),
                     startMs = obj.getLong("startMs"),
                     endMs = obj.getLong("endMs"),
                     keyframes = kfs,
@@ -100,7 +103,7 @@ class VideoMosaicProcessor {
     }
 }
 
-enum class MosaicType { PIXELATE, BLUR, BLACKOUT }
+enum class MosaicType { PIXELATE, BLUR, BLACKOUT, WHITEOUT, NOISE }
 enum class MosaicShape { RECTANGLE, ELLIPSE }
 
 data class KeyframeParam(
@@ -115,6 +118,7 @@ data class KeyframeParam(
 data class LayerParam(
     val type: MosaicType,
     val shape: MosaicShape,
+    val inverted: Boolean,
     val startMs: Long,
     val endMs: Long,
     val keyframes: List<KeyframeParam>,

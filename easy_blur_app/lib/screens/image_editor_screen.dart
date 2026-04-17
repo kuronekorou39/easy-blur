@@ -8,6 +8,7 @@ import '../painters/mosaic_painter.dart';
 import '../utils/theme.dart';
 import '../widgets/editor_bottom_sheet.dart';
 import '../widgets/floating_action_button_row.dart';
+import '../widgets/mosaic_effect_layer.dart';
 import '../widgets/mosaic_overlay.dart';
 
 class ImageEditorScreen extends StatefulWidget {
@@ -141,6 +142,12 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
     final layer = _project.selectedLayer;
     if (layer == null) return;
     setState(() => layer.shape = shape);
+  }
+
+  void _onInvertedChanged(bool inverted) {
+    final layer = _project.selectedLayer;
+    if (layer == null) return;
+    setState(() => layer.inverted = inverted);
   }
 
   void _onIntensityChanged(double value) {
@@ -438,6 +445,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
               selectedIndex: _project.selectedLayerIndex,
               onTypeChanged: _onTypeChanged,
               onShapeChanged: _onShapeChanged,
+              onInvertedChanged: _onInvertedChanged,
               onIntensityChanged: _onIntensityChanged,
               onSelectLayer: _selectLayer,
               onAddLayer: _addLayer,
@@ -471,23 +479,32 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
           child: Stack(
             clipBehavior: Clip.hardEdge,
             children: [
-              // 画像+モザイク効果
-              Positioned.fill(
-                child: RepaintBoundary(
-                  key: _canvasKey,
-                  child: CustomPaint(
-                    painter: MosaicPainter(
-                      mediaImage: _uiImage,
-                      layers: _project.layers,
-                      currentTime: Duration.zero,
-                      mediaSize: _imageSize,
-                      selectedLayerIndex: null,
+              // 画像本体のみ描画（モザイクは別レイヤーで重ねる）
+              if (_uiImage != null)
+                Positioned.fromRect(
+                  rect: imageRect,
+                  child: RepaintBoundary(
+                    key: _canvasKey,
+                    child: RawImage(
+                      image: _uiImage,
+                      fit: BoxFit.fill,
                     ),
-                    size: canvasSize,
-                    child: const SizedBox.expand(),
                   ),
                 ),
-              ),
+              // 各レイヤーのモザイク効果（BackdropFilter で実画像にフィルター）
+              for (int i = 0; i < _project.layers.length; i++)
+                if (_project.layers[i].visible &&
+                    _project.layers[i].keyframes.isNotEmpty)
+                  MosaicEffectLayer(
+                    key: ValueKey('effect_${_project.layers[i].id}'),
+                    canvasRect: _layerCanvasRect(
+                        _project.layers[i], imageRect, scale),
+                    type: _project.layers[i].type,
+                    shape: _project.layers[i].shape,
+                    inverted: _project.layers[i].inverted,
+                    intensity:
+                        _project.layers[i].keyframes.first.intensity,
+                  ),
               // 各レイヤーのオーバーレイ（選択枠・ハンドル）
               for (int i = 0; i < _project.layers.length; i++)
                 if (_project.layers[i].visible &&

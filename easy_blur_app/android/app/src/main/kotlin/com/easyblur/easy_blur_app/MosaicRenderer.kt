@@ -45,6 +45,7 @@ class MosaicRenderer(
     private var uEffectMosaic = 0
     private var uIntensityMosaic = 0
     private var uShapeMosaic = 0
+    private var uInvertedMosaic = 0
 
     private lateinit var vertexBuf: FloatBuffer
     private val mvpMatrix = FloatArray(16)
@@ -108,6 +109,7 @@ class MosaicRenderer(
         uEffectMosaic = GLES20.glGetUniformLocation(mosaicProgram, "u_effect")
         uIntensityMosaic = GLES20.glGetUniformLocation(mosaicProgram, "u_intensity")
         uShapeMosaic = GLES20.glGetUniformLocation(mosaicProgram, "u_shape")
+        uInvertedMosaic = GLES20.glGetUniformLocation(mosaicProgram, "u_inverted")
     }
 
     /**
@@ -183,26 +185,34 @@ class MosaicRenderer(
         GLES20.glUniform1i(uTexMosaic, 0)
         GLES20.glUniformMatrix4fv(uStMatrixMosaic, 1, false, stMatrix, 0)
 
-        // レイヤー矩形（画面座標系）を NDC へ変換
+        // レイヤー矩形のUV座標（u_sample_box に渡す、反転判定でも使う）
         val w = outputWidth.toFloat()
         val h = outputHeight.toFloat()
-        val x0 = (kf.cx - kf.w / 2f) / w * 2f - 1f
-        val x1 = (kf.cx + kf.w / 2f) / w * 2f - 1f
-        val y0 = 1f - (kf.cy + kf.h / 2f) / h * 2f
-        val y1 = 1f - (kf.cy - kf.h / 2f) / h * 2f
-
-        // UV は画面全体に対する比率（v は反転）
         val u0 = (kf.cx - kf.w / 2f) / w
         val u1 = (kf.cx + kf.w / 2f) / w
         val v0 = 1f - (kf.cy + kf.h / 2f) / h
         val v1 = 1f - (kf.cy - kf.h / 2f) / h
 
-        val quad = floatArrayOf(
-            x0, y0, u0, v0,
-            x1, y0, u1, v0,
-            x0, y1, u0, v1,
-            x1, y1, u1, v1,
-        )
+        // 反転モードは全画面クアッドで描画（シェーダーが矩形外のみエフェクト）
+        val quad: FloatArray = if (layer.inverted) {
+            floatArrayOf(
+                -1f, -1f, 0f, 0f,
+                1f, -1f, 1f, 0f,
+                -1f, 1f, 0f, 1f,
+                1f, 1f, 1f, 1f,
+            )
+        } else {
+            val x0 = u0 * 2f - 1f
+            val x1 = u1 * 2f - 1f
+            val y0 = v0 * 2f - 1f
+            val y1 = v1 * 2f - 1f
+            floatArrayOf(
+                x0, y0, u0, v0,
+                x1, y0, u1, v0,
+                x0, y1, u0, v1,
+                x1, y1, u1, v1,
+            )
+        }
         val quadBuf = ByteBuffer.allocateDirect(quad.size * 4)
             .order(ByteOrder.nativeOrder())
             .asFloatBuffer().apply { put(quad); position(0) }
@@ -212,6 +222,8 @@ class MosaicRenderer(
             MosaicType.PIXELATE -> 0
             MosaicType.BLUR -> 1
             MosaicType.BLACKOUT -> 2
+            MosaicType.WHITEOUT -> 3
+            MosaicType.NOISE -> 4
         }
         val shape = when (layer.shape) {
             MosaicShape.RECTANGLE -> 0
@@ -219,6 +231,7 @@ class MosaicRenderer(
         }
         GLES20.glUniform1i(uEffectMosaic, effect)
         GLES20.glUniform1i(uShapeMosaic, shape)
+        GLES20.glUniform1i(uInvertedMosaic, if (layer.inverted) 1 else 0)
         GLES20.glUniform1f(uIntensityMosaic, max(2f, kf.intensity))
         GLES20.glUniform4f(uSampleBoxMosaic, u0, v0, u1, v1)
 
@@ -290,22 +303,37 @@ class MosaicRenderer(
             uniform vec4 u_sample_box;
             uniform int u_effect;
             uniform int u_shape;
+            uniform int u_inverted;
             uniform float u_intensity;
 
             void main() {
-                // 形状マスク（楕円チェック）
+                // 矩形内判定
+                bool inBox = (v_uv.x >= u_sample_box.x && v_uv.x <= u_sample_box.z
+                           && v_uv.y >= u_sample_box.y && v_uv.y <= u_sample_box.w);
+                // 楕円の場合は楕円方程式で上書き
                 if (u_shape == 1) {
-                    vec2 d = (v_uv - vec2((u_sample_box.x + u_sample_box.z) * 0.5,
-                                          (u_sample_box.y + u_sample_box.w) * 0.5));
+                    vec2 center = vec2((u_sample_box.x + u_sample_box.z) * 0.5,
+                                       (u_sample_box.y + u_sample_box.w) * 0.5);
                     vec2 r = vec2((u_sample_box.z - u_sample_box.x) * 0.5,
                                   (u_sample_box.w - u_sample_box.y) * 0.5);
+                    vec2 d = v_uv - center;
                     float e = (d.x * d.x) / (r.x * r.x) + (d.y * d.y) / (r.y * r.y);
-                    if (e > 1.0) discard;
+                    inBox = e <= 1.0;
                 }
+                // 反転モードでは内外判定を反転
+                bool shouldApply = (u_inverted == 1) ? !inBox : inBox;
+                if (!shouldApply) discard;
 
                 if (u_effect == 2) {
                     // 黒塗り
                     gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                } else if (u_effect == 3) {
+                    // 白塗り
+                    gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+                } else if (u_effect == 4) {
+                    // ノイズ（決定論的疑似乱数）
+                    float n = fract(sin(dot(v_uv * 1000.0, vec2(12.9898, 78.233))) * 43758.5453);
+                    gl_FragColor = vec4(vec3(n), 1.0);
                 } else if (u_effect == 0) {
                     // ピクセレート: サンプリングUVを量子化
                     float cellsX = u_intensity;

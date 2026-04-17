@@ -4,6 +4,8 @@ enum MosaicType {
   pixelate,
   blur,
   blackout,
+  whiteout,
+  noise,
 }
 
 enum MosaicShape {
@@ -63,6 +65,9 @@ class MosaicLayer {
   MosaicShape shape;
   bool visible;
 
+  /// true の場合、矩形の外側にエフェクトが適用される（内外反転）
+  bool inverted;
+
   /// レイヤーが表示され始める時刻（動画専用、画像では未使用）
   Duration startTime;
 
@@ -78,6 +83,7 @@ class MosaicLayer {
     this.type = MosaicType.pixelate,
     this.shape = MosaicShape.rectangle,
     this.visible = true,
+    this.inverted = false,
     this.startTime = Duration.zero,
     this.endTime = const Duration(days: 1),
     List<Keyframe>? keyframes,

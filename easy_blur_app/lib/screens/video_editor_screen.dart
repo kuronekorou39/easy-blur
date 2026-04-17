@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
 import 'package:video_player/video_player.dart';
@@ -10,6 +9,7 @@ import '../utils/video_exporter.dart';
 import '../widgets/compact_playback_bar.dart';
 import '../widgets/editor_bottom_sheet.dart';
 import '../widgets/floating_action_button_row.dart';
+import '../widgets/mosaic_effect_layer.dart';
 import '../widgets/mosaic_overlay.dart';
 import '../widgets/view_mode_toggle.dart';
 
@@ -345,6 +345,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     setState(() => layer.shape = shape);
   }
 
+  void _onInvertedChanged(bool inverted) {
+    final layer = _project.selectedLayer;
+    if (layer == null) return;
+    setState(() => layer.inverted = inverted);
+  }
+
   void _onIntensityChanged(double value) {
     final layer = _project.selectedLayer;
     if (layer == null) return;
@@ -659,6 +665,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       selectedIndex: _project.selectedLayerIndex,
       onTypeChanged: _onTypeChanged,
       onShapeChanged: _onShapeChanged,
+      onInvertedChanged: _onInvertedChanged,
       onIntensityChanged: _onIntensityChanged,
       onSelectLayer: _selectLayer,
       onAddLayer: _addLayer,
@@ -769,19 +776,23 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                   rect: videoRect,
                   child: VideoPlayer(ctrl),
                 ),
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: CustomPaint(
-                    painter: _VideoMosaicEffectPainter(
-                      layers: _project.layers,
-                      currentTime: _currentTime,
-                      mediaSize: _videoSize,
-                    ),
-                    size: canvasSize,
-                    child: const SizedBox.expand(),
+              // モザイク効果（BackdropFilter で実フレームにフィルター適用）
+              for (int i = 0; i < _project.layers.length; i++)
+                if (_project.layers[i].visible &&
+                    _project.layers[i].keyframes.isNotEmpty &&
+                    _project.layers[i].isActiveAt(_currentTime))
+                  MosaicEffectLayer(
+                    key: ValueKey(
+                        'effect_${_project.layers[i].id}'),
+                    canvasRect: _layerCanvasRect(
+                        _project.layers[i], videoRect, scale),
+                    type: _project.layers[i].type,
+                    shape: _project.layers[i].shape,
+                    inverted: _project.layers[i].inverted,
+                    intensity: _project.layers[i]
+                        .getStateAt(_currentTime)
+                        .intensity,
                   ),
-                ),
-              ),
               if (!_saving)
                 for (int i = 0; i < _project.layers.length; i++)
                   if (_project.layers[i].visible &&
@@ -851,120 +862,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       },
     );
   }
-}
-
-/// 動画上にモザイク効果のみを描画するペインター
-/// 動画自体は VideoPlayer が表示するため、ここでは描画しない
-class _VideoMosaicEffectPainter extends CustomPainter {
-  final List<MosaicLayer> layers;
-  final Duration currentTime;
-  final Size mediaSize;
-
-  _VideoMosaicEffectPainter({
-    required this.layers,
-    required this.currentTime,
-    required this.mediaSize,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (mediaSize.isEmpty) return;
-
-    final scale = _fitScale(size);
-    final imgW = mediaSize.width * scale;
-    final imgH = mediaSize.height * scale;
-    final left = (size.width - imgW) / 2;
-    final top = (size.height - imgH) / 2;
-    final dst = Rect.fromLTWH(left, top, imgW, imgH);
-
-    canvas.save();
-    canvas.clipRect(dst);
-
-    for (int i = 0; i < layers.length; i++) {
-      final layer = layers[i];
-      if (!layer.visible || layer.keyframes.isEmpty) continue;
-      if (!layer.isActiveAt(currentTime)) continue; // 時間範囲外は非表示
-      final state = layer.getStateAt(currentTime);
-      _drawMosaicRegion(canvas, dst, scale, layer, state);
-    }
-
-    canvas.restore();
-  }
-
-  void _drawMosaicRegion(
-    Canvas canvas,
-    Rect videoDst,
-    double scale,
-    MosaicLayer layer,
-    Keyframe state,
-  ) {
-    final cx = videoDst.left + state.position.dx * scale;
-    final cy = videoDst.top + state.position.dy * scale;
-    final w = state.size.width * scale;
-    final h = state.size.height * scale;
-    final rect = Rect.fromCenter(center: Offset(cx, cy), width: w, height: h);
-
-    canvas.save();
-    canvas.translate(cx, cy);
-    canvas.rotate(state.rotation);
-    canvas.translate(-cx, -cy);
-
-    final path = Path();
-    if (layer.shape == MosaicShape.ellipse) {
-      path.addOval(rect);
-    } else {
-      path.addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)));
-    }
-    canvas.clipPath(path);
-
-    switch (layer.type) {
-      case MosaicType.pixelate:
-        final blockSize = max(2.0, state.intensity * scale * 0.5);
-        final paint = Paint();
-        for (double y = rect.top; y < rect.bottom; y += blockSize) {
-          for (double x = rect.left; x < rect.right; x += blockSize) {
-            final bw = min(blockSize, rect.right - x);
-            final bh = min(blockSize, rect.bottom - y);
-            final hash =
-                (x ~/ blockSize * 17 + y ~/ blockSize * 31) % 255;
-            paint.color = Color.fromARGB(
-                200, hash ~/ 2, hash ~/ 2, hash ~/ 2);
-            canvas.drawRect(Rect.fromLTWH(x, y, bw, bh), paint);
-          }
-        }
-        break;
-      case MosaicType.blur:
-        // 動画フレームにアクセスできないため、半透明の塗り+マスクブラーで擬似表現
-        final sigma = max(1.0, state.intensity * 0.6);
-        canvas.drawRect(
-          rect,
-          Paint()
-            ..color = Colors.grey.withValues(alpha: 0.55)
-            ..maskFilter = MaskFilter.blur(BlurStyle.normal, sigma),
-        );
-        // より確実な不透明化のためにもう一度塗る
-        canvas.drawRect(
-          rect,
-          Paint()..color = Colors.white.withValues(alpha: 0.15),
-        );
-        break;
-      case MosaicType.blackout:
-        canvas.drawRect(rect, Paint()..color = Colors.black);
-        break;
-    }
-
-    canvas.restore();
-  }
-
-  double _fitScale(Size canvasSize) {
-    if (mediaSize.isEmpty) return 1.0;
-    final sx = canvasSize.width / mediaSize.width;
-    final sy = canvasSize.height / mediaSize.height;
-    return sx < sy ? sx : sy;
-  }
-
-  @override
-  bool shouldRepaint(covariant _VideoMosaicEffectPainter old) => true;
 }
 
 class _LoadingView extends StatelessWidget {

@@ -1,0 +1,67 @@
+name: Release APK
+
+# タグ v* (例: v1.0.0) をプッシュすると自動でリリース APK をビルド＆公開
+on:
+  push:
+    tags:
+      - 'v*'
+  # 手動実行もできる
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.1'
+          channel: stable
+
+      - name: Decode keystore
+        run: |
+          echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > ${{ runner.temp }}/release.jks
+          if [ ! -s "${{ runner.temp }}/release.jks" ]; then
+            echo "::error::Keystore decoded file is empty. RELEASE_KEYSTORE_BASE64 secret が正しく設定されているか確認してください"
+            exit 1
+          fi
+
+      - name: Get dependencies
+        working-directory: easy_blur_app
+        run: flutter pub get
+
+      - name: Build APK (arm64)
+        working-directory: easy_blur_app
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: flutter build apk --release --target-platform android-arm64
+
+      - name: Rename APK
+        working-directory: easy_blur_app
+        run: |
+          mv build/app/outputs/flutter-apk/app-release.apk \
+             build/app/outputs/flutter-apk/easy-blur-${{ github.ref_name }}-arm64.apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: easy_blur_app/build/app/outputs/flutter-apk/easy-blur-*.apk
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false

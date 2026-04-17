@@ -107,28 +107,50 @@ class MosaicPainter extends CustomPainter {
     final rect = Rect.fromCenter(center: Offset(cx, cy), width: w, height: h);
 
     canvas.save();
-    canvas.translate(cx, cy);
-    canvas.rotate(state.rotation);
-    canvas.translate(-cx, -cy);
+    // 反転モード時は画像全体が対象のため回転は適用しない
+    if (!layer.inverted) {
+      canvas.translate(cx, cy);
+      canvas.rotate(state.rotation);
+      canvas.translate(-cx, -cy);
+    }
 
     // 形状でクリップ
-    final path = Path();
+    final shapePath = Path();
     if (layer.shape == MosaicShape.ellipse) {
-      path.addOval(rect);
+      shapePath.addOval(rect);
     } else {
-      path.addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)));
+      shapePath
+          .addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)));
     }
-    canvas.clipPath(path);
+
+    if (layer.inverted) {
+      // 反転: 画像領域から形状パスを除外
+      final outer = Path()..addRect(imageDst);
+      final inverted =
+          Path.combine(PathOperation.difference, outer, shapePath);
+      canvas.clipPath(inverted);
+    } else {
+      canvas.clipPath(shapePath);
+    }
+
+    // 反転時のエフェクト描画範囲は画像全体
+    final effectRect = layer.inverted ? imageDst : rect;
 
     switch (layer.type) {
       case MosaicType.pixelate:
-        _drawPixelate(canvas, rect, state.intensity, scale);
+        _drawPixelate(canvas, effectRect, state.intensity, scale);
         break;
       case MosaicType.blur:
-        _drawBlur(canvas, rect, state.intensity, imageDst);
+        _drawBlur(canvas, effectRect, state.intensity, imageDst);
         break;
       case MosaicType.blackout:
-        canvas.drawRect(rect, Paint()..color = Colors.black);
+        canvas.drawRect(effectRect, Paint()..color = Colors.black);
+        break;
+      case MosaicType.whiteout:
+        canvas.drawRect(effectRect, Paint()..color = Colors.white);
+        break;
+      case MosaicType.noise:
+        _drawNoise(canvas, effectRect, state.intensity, scale);
         break;
     }
 
@@ -146,6 +168,25 @@ class MosaicPainter extends CustomPainter {
         final bh = min(blockSize, rect.bottom - y);
         final hash = (x ~/ blockSize * 17 + y ~/ blockSize * 31) % 255;
         paint.color = Color.fromARGB(180, hash ~/ 2, hash ~/ 2, hash ~/ 2);
+        canvas.drawRect(Rect.fromLTWH(x, y, bw, bh), paint);
+      }
+    }
+  }
+
+  void _drawNoise(
+      Canvas canvas, Rect rect, double intensity, double scale) {
+    final pixelSize = max(1.0, intensity * scale * 0.15);
+    final paint = Paint();
+    const seed = 42;
+    for (double y = rect.top; y < rect.bottom; y += pixelSize) {
+      for (double x = rect.left; x < rect.right; x += pixelSize) {
+        final h = ((x.toInt() * 73856093) ^
+                (y.toInt() * 19349663) ^
+                seed) &
+            0xFF;
+        paint.color = Color.fromARGB(255, h, h, h);
+        final bw = min(pixelSize, rect.right - x);
+        final bh = min(pixelSize, rect.bottom - y);
         canvas.drawRect(Rect.fromLTWH(x, y, bw, bh), paint);
       }
     }

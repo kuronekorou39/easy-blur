@@ -16,6 +16,7 @@ class LayerPanel extends StatefulWidget {
   final void Function(int oldIndex, int newIndex) onReorder;
   final ValueChanged<MosaicType> onTypeChanged;
   final ValueChanged<MosaicShape> onShapeChanged;
+  final ValueChanged<bool> onInvertedChanged;
   final ValueChanged<double> onIntensityChanged;
 
   // 動画用: 時間範囲編集
@@ -40,6 +41,7 @@ class LayerPanel extends StatefulWidget {
     required this.onReorder,
     required this.onTypeChanged,
     required this.onShapeChanged,
+    required this.onInvertedChanged,
     required this.onIntensityChanged,
     this.showTimeRange = false,
     this.currentTime,
@@ -209,6 +211,10 @@ class _LayerPanelState extends State<LayerPanel> {
               widget.onSelect(index);
               widget.onShapeChanged(s);
             },
+            onInvertedChanged: (v) {
+              widget.onSelect(index);
+              widget.onInvertedChanged(v);
+            },
             onIntensityChanged: (v) {
               widget.onSelect(index);
               widget.onIntensityChanged(v);
@@ -251,6 +257,7 @@ class _LayerTile extends StatelessWidget {
   final VoidCallback onDelete;
   final ValueChanged<MosaicType> onTypeChanged;
   final ValueChanged<MosaicShape> onShapeChanged;
+  final ValueChanged<bool> onInvertedChanged;
   final ValueChanged<double> onIntensityChanged;
 
   // 動画用
@@ -276,6 +283,7 @@ class _LayerTile extends StatelessWidget {
     required this.onDelete,
     required this.onTypeChanged,
     required this.onShapeChanged,
+    required this.onInvertedChanged,
     required this.onIntensityChanged,
     this.showTimeRange = false,
     this.currentTime,
@@ -296,6 +304,10 @@ class _LayerTile extends StatelessWidget {
         return Icons.blur_on_rounded;
       case MosaicType.blackout:
         return Icons.block_rounded;
+      case MosaicType.whiteout:
+        return Icons.circle_rounded;
+      case MosaicType.noise:
+        return Icons.grain_rounded;
     }
   }
 
@@ -307,6 +319,10 @@ class _LayerTile extends StatelessWidget {
         return 'ぼかし';
       case MosaicType.blackout:
         return '黒塗り';
+      case MosaicType.whiteout:
+        return '白塗り';
+      case MosaicType.noise:
+        return 'ノイズ';
     }
   }
 
@@ -469,6 +485,45 @@ class _LayerTile extends StatelessWidget {
     );
   }
 
+  Widget _buildTypeGrid() {
+    // 5種の効果を 3列 × 2行 のグリッドで表示
+    const perRow = 3;
+    final types = MosaicType.values;
+    final rows = <Widget>[];
+    for (int i = 0; i < types.length; i += perRow) {
+      final rowItems = <Widget>[];
+      for (int j = 0; j < perRow; j++) {
+        if (i + j < types.length) {
+          final t = types[i + j];
+          rowItems.add(Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(right: j < perRow - 1 ? 6 : 0),
+              child: _OptionChip(
+                label: _labelForType(t),
+                icon: _iconForType(t),
+                isSelected: layer.type == t,
+                onTap: () => onTypeChanged(t),
+              ),
+            ),
+          ));
+        } else {
+          // 埋め合わせの空枠
+          rowItems.add(Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(right: j < perRow - 1 ? 6 : 0),
+              child: const SizedBox.shrink(),
+            ),
+          ));
+        }
+      }
+      rows.add(Row(children: rowItems));
+      if (i + perRow < types.length) {
+        rows.add(const SizedBox(height: 6));
+      }
+    }
+    return Column(children: rows);
+  }
+
   Widget _buildExpandedProperties(Keyframe? kf) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -482,22 +537,7 @@ class _LayerTile extends StatelessWidget {
           const SizedBox(height: AppTheme.spaceMd),
           Text('効果', style: AppTheme.textLabel),
           const SizedBox(height: 6),
-          Row(
-            children: MosaicType.values.map((t) {
-              final isLast = t == MosaicType.values.last;
-              return Expanded(
-                child: Padding(
-                  padding: EdgeInsets.only(right: isLast ? 0 : 6),
-                  child: _OptionChip(
-                    label: _labelForType(t),
-                    icon: _iconForType(t),
-                    isSelected: layer.type == t,
-                    onTap: () => onTypeChanged(t),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
+          _buildTypeGrid(),
           const SizedBox(height: AppTheme.spaceMd),
           Text('形状', style: AppTheme.textLabel),
           const SizedBox(height: 6),
@@ -516,6 +556,30 @@ class _LayerTile extends StatelessWidget {
                 ),
               );
             }).toList(),
+          ),
+          const SizedBox(height: AppTheme.spaceMd),
+          Text('適用範囲', style: AppTheme.textLabel),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: _OptionChip(
+                  label: '内側',
+                  icon: Icons.center_focus_strong_rounded,
+                  isSelected: !layer.inverted,
+                  onTap: () => onInvertedChanged(false),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: _OptionChip(
+                  label: '外側',
+                  icon: Icons.filter_center_focus_rounded,
+                  isSelected: layer.inverted,
+                  onTap: () => onInvertedChanged(true),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: AppTheme.spaceMd),
           Row(
@@ -614,6 +678,10 @@ class _LayerTile extends StatelessWidget {
         return 'ぼかし';
       case MosaicType.blackout:
         return '黒塗り';
+      case MosaicType.whiteout:
+        return '白塗り';
+      case MosaicType.noise:
+        return 'ノイズ';
     }
   }
 
@@ -625,6 +693,10 @@ class _LayerTile extends StatelessWidget {
         return Icons.blur_on_rounded;
       case MosaicType.blackout:
         return Icons.block_rounded;
+      case MosaicType.whiteout:
+        return Icons.circle_rounded;
+      case MosaicType.noise:
+        return Icons.grain_rounded;
     }
   }
 

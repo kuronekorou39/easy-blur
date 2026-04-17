@@ -92,6 +92,7 @@ class VideoExporter {
       list.add({
         'type': l.type.name,
         'shape': l.shape.name,
+        'inverted': l.inverted,
         'startMs': l.startTime.inMilliseconds,
         'endMs': l.endTime.inMilliseconds,
         'keyframes': keyframes,

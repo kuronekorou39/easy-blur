@@ -206,6 +206,10 @@ class PropertyPanel extends StatelessWidget {
         return 'ぼかし';
       case MosaicType.blackout:
         return '黒塗り';
+      case MosaicType.whiteout:
+        return '白塗り';
+      case MosaicType.noise:
+        return 'ノイズ';
     }
   }
 
@@ -217,6 +221,10 @@ class PropertyPanel extends StatelessWidget {
         return Icons.blur_on_rounded;
       case MosaicType.blackout:
         return Icons.block_rounded;
+      case MosaicType.whiteout:
+        return Icons.circle_rounded;
+      case MosaicType.noise:
+        return Icons.grain_rounded;
     }
   }
 

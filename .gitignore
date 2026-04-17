@@ -1,1 +1,6 @@
 hs_err_pid*.log
+
+# リリース署名ファイル（絶対にコミットしない）
+*.jks
+*.keystore
+key.properties
