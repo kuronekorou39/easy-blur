@@ -25,6 +25,9 @@ class LayerPanel extends StatefulWidget {
   final ValueChanged<int>? onSetStart;
   final ValueChanged<int>? onSetEnd;
   final ValueChanged<Duration>? onSeekTo;
+  final ValueChanged<int>? onAddKeyframeAtCurrent;
+  final ValueChanged<int>? onDeleteKeyframeAtCurrent;
+  final void Function(int layerIndex, int keyframeIndex)? onDeleteKeyframe;
 
   const LayerPanel({
     super.key,
@@ -44,6 +47,9 @@ class LayerPanel extends StatefulWidget {
     this.onSetStart,
     this.onSetEnd,
     this.onSeekTo,
+    this.onAddKeyframeAtCurrent,
+    this.onDeleteKeyframeAtCurrent,
+    this.onDeleteKeyframe,
   });
 
   @override
@@ -217,6 +223,16 @@ class _LayerPanelState extends State<LayerPanel> {
                 ? null
                 : () => widget.onSetEnd!(index),
             onSeekTo: widget.onSeekTo,
+            onAddKeyframeAtCurrent: widget.onAddKeyframeAtCurrent == null
+                ? null
+                : () => widget.onAddKeyframeAtCurrent!(index),
+            onDeleteKeyframeAtCurrent:
+                widget.onDeleteKeyframeAtCurrent == null
+                    ? null
+                    : () => widget.onDeleteKeyframeAtCurrent!(index),
+            onDeleteKeyframe: widget.onDeleteKeyframe == null
+                ? null
+                : (kfIndex) => widget.onDeleteKeyframe!(index, kfIndex),
           );
         },
       ),
@@ -244,6 +260,9 @@ class _LayerTile extends StatelessWidget {
   final VoidCallback? onSetStart;
   final VoidCallback? onSetEnd;
   final ValueChanged<Duration>? onSeekTo;
+  final VoidCallback? onAddKeyframeAtCurrent;
+  final VoidCallback? onDeleteKeyframeAtCurrent;
+  final ValueChanged<int>? onDeleteKeyframe;
 
   const _LayerTile({
     super.key,
@@ -264,6 +283,9 @@ class _LayerTile extends StatelessWidget {
     this.onSetStart,
     this.onSetEnd,
     this.onSeekTo,
+    this.onAddKeyframeAtCurrent,
+    this.onDeleteKeyframeAtCurrent,
+    this.onDeleteKeyframe,
   });
 
   IconData get _typeIcon {
@@ -568,6 +590,9 @@ class _LayerTile extends StatelessWidget {
               onSetStart: onSetStart,
               onSetEnd: onSetEnd,
               onSeekTo: onSeekTo,
+              onAddKeyframeAtCurrent: onAddKeyframeAtCurrent,
+              onDeleteKeyframeAtCurrent: onDeleteKeyframeAtCurrent,
+              onDeleteKeyframe: onDeleteKeyframe,
               isActive: layer.isActiveAt(currentTime!),
             ),
           ],
@@ -707,6 +732,9 @@ class _TimeRangeControl extends StatelessWidget {
   final VoidCallback? onSetStart;
   final VoidCallback? onSetEnd;
   final ValueChanged<Duration>? onSeekTo;
+  final VoidCallback? onAddKeyframeAtCurrent;
+  final VoidCallback? onDeleteKeyframeAtCurrent;
+  final ValueChanged<int>? onDeleteKeyframe;
   final bool isActive;
 
   const _TimeRangeControl({
@@ -718,11 +746,31 @@ class _TimeRangeControl extends StatelessWidget {
     required this.onSetStart,
     required this.onSetEnd,
     required this.onSeekTo,
+    required this.onAddKeyframeAtCurrent,
+    required this.onDeleteKeyframeAtCurrent,
+    required this.onDeleteKeyframe,
     required this.isActive,
   });
 
+  /// 現在時刻にキーフレームがあるかチェック（インデックスを返す、なければ-1）
+  int _findKeyframeAtCurrent() {
+    const toleranceMs = 150;
+    for (int i = 0; i < keyframeTimes.length; i++) {
+      if ((keyframeTimes[i].inMilliseconds -
+                  currentTime.inMilliseconds)
+              .abs() <=
+          toleranceMs) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final currentKfIndex = _findKeyframeAtCurrent();
+    final hasKfAtCurrent = currentKfIndex >= 0;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -753,7 +801,6 @@ class _TimeRangeControl extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 8),
-        // プログレスバー（範囲+キーフレーム可視化）
         _RangeBar(
           startTime: startTime,
           endTime: endTime,
@@ -761,13 +808,8 @@ class _TimeRangeControl extends StatelessWidget {
           totalDuration: totalDuration,
           keyframeTimes: keyframeTimes,
           onSeekTo: onSeekTo,
+          onDeleteKeyframe: onDeleteKeyframe,
         ),
-        const SizedBox(height: 4),
-        if (keyframeTimes.length > 1)
-          Text(
-            'キーフレーム ${keyframeTimes.length}個 · ドットをタップで移動',
-            style: AppTheme.textCaption.copyWith(fontSize: 10),
-          ),
         const SizedBox(height: 10),
         // 開始・終了行
         Row(
@@ -791,7 +833,158 @@ class _TimeRangeControl extends StatelessWidget {
             ),
           ],
         ),
+        const SizedBox(height: AppTheme.spaceMd),
+        Container(
+          height: 1,
+          color: AppTheme.borderColor.withValues(alpha: 0.4),
+        ),
+        const SizedBox(height: AppTheme.spaceMd),
+        // キーフレーム管理
+        Row(
+          children: [
+            Text('キーフレーム', style: AppTheme.textLabel),
+            const SizedBox(width: 6),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+              decoration: BoxDecoration(
+                color: AppTheme.bgHover,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '${keyframeTimes.length}',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppTheme.textSecondary,
+                  fontWeight: FontWeight.w700,
+                  height: 1.2,
+                ),
+              ),
+            ),
+            const Spacer(),
+            if (hasKfAtCurrent)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppTheme.accent.withValues(alpha: 0.25),
+                  borderRadius:
+                      BorderRadius.circular(AppTheme.radiusSmall),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: const BoxDecoration(
+                        color: AppTheme.accentBright,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      '現在位置にあり',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.accentBright,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: _KeyframeActionButton(
+                icon: Icons.add_location_alt_rounded,
+                label: 'ここに追加',
+                accent: true,
+                enabled: !hasKfAtCurrent && onAddKeyframeAtCurrent != null,
+                onTap: onAddKeyframeAtCurrent,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: _KeyframeActionButton(
+                icon: Icons.wrong_location_rounded,
+                label: 'ここを削除',
+                accent: false,
+                enabled: hasKfAtCurrent &&
+                    keyframeTimes.length > 1 &&
+                    onDeleteKeyframeAtCurrent != null,
+                onTap: onDeleteKeyframeAtCurrent,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          keyframeTimes.length > 1
+              ? 'バーのドットをタップで移動、長押しで削除'
+              : 'キーフレームは最低1つ必要です',
+          style: AppTheme.textCaption.copyWith(fontSize: 10),
+        ),
       ],
+    );
+  }
+}
+
+class _KeyframeActionButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool accent;
+  final bool enabled;
+  final VoidCallback? onTap;
+
+  const _KeyframeActionButton({
+    required this.icon,
+    required this.label,
+    required this.accent,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = accent ? AppTheme.accent : AppTheme.danger;
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedOpacity(
+        duration: AppTheme.animFast,
+        opacity: enabled ? 1.0 : 0.35,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: enabled ? 0.18 : 0.1),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+            border: Border.all(
+              color: color.withValues(alpha: enabled ? 0.55 : 0.25),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 14, color: color),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -803,6 +996,7 @@ class _RangeBar extends StatelessWidget {
   final Duration totalDuration;
   final List<Duration> keyframeTimes;
   final ValueChanged<Duration>? onSeekTo;
+  final ValueChanged<int>? onDeleteKeyframe;
 
   const _RangeBar({
     required this.startTime,
@@ -811,7 +1005,41 @@ class _RangeBar extends StatelessWidget {
     required this.totalDuration,
     required this.keyframeTimes,
     required this.onSeekTo,
+    this.onDeleteKeyframe,
   });
+
+  Future<void> _confirmDelete(BuildContext context, int index) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgElevated,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+        ),
+        title: const Text('キーフレームを削除'),
+        content: Text(
+          'この時刻のキーフレームを削除します。\nモザイクの動きが変わります。',
+          style: AppTheme.textBody,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('キャンセル'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.danger,
+            ),
+            child: const Text('削除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      onDeleteKeyframe?.call(index);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -896,14 +1124,18 @@ class _RangeBar extends StatelessWidget {
                   left: ((keyframeTimes[i].inMilliseconds / total)
                               .clamp(0.0, 1.0) *
                           w) -
-                      10,
-                  top: 4,
-                  width: 20,
-                  height: 20,
+                      12,
+                  top: 2,
+                  width: 24,
+                  height: 24,
                   child: GestureDetector(
                     onTap: onSeekTo == null
                         ? null
                         : () => onSeekTo!(keyframeTimes[i]),
+                    onLongPress: onDeleteKeyframe == null ||
+                            keyframeTimes.length <= 1
+                        ? null
+                        : () => _confirmDelete(context, i),
                     behavior: HitTestBehavior.opaque,
                     child: Center(
                       child: AnimatedContainer(

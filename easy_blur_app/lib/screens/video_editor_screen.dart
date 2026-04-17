@@ -9,8 +9,9 @@ import '../utils/theme.dart';
 import '../utils/video_exporter.dart';
 import '../widgets/compact_playback_bar.dart';
 import '../widgets/editor_bottom_sheet.dart';
+import '../widgets/floating_action_button_row.dart';
 import '../widgets/mosaic_overlay.dart';
-import '../widgets/top_toolbar.dart';
+import '../widgets/view_mode_toggle.dart';
 
 class VideoEditorScreen extends StatefulWidget {
   final EditorProject project;
@@ -34,6 +35,19 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   Timer? _positionTimer;
   Size _videoSize = Size.zero;
   int _rotationDegrees = 0;
+
+  // 表示モード: 縮小/固定
+  VideoViewMode _viewMode = VideoViewMode.shrink;
+  VerticalAnchor _anchor = VerticalAnchor.center;
+
+  // シーク処理の重複防止・最新値のみ反映
+  bool _seeking = false;
+  Duration? _pendingSeek;
+
+  // 再生開始のバッファリング表示
+  bool _playLoading = false;
+  Duration _playStartPos = Duration.zero;
+  Timer? _playLoadingTimeout;
 
   @override
   void initState() {
@@ -74,17 +88,35 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       });
 
       _positionTimer = Timer.periodic(
-        const Duration(milliseconds: 50),
+        const Duration(milliseconds: 100),
         (_) {
           if (!mounted) return;
+          if (_seeking || _pendingSeek != null) return;
           final ctrl = _videoController;
           if (ctrl == null) return;
           final pos = ctrl.value.position;
           final nowPlaying = ctrl.value.isPlaying;
-          if (pos != _currentTime || nowPlaying != _playing) {
+
+          // 再生ローディング解除条件（いずれか）:
+          //   - isPlaying が true になった
+          //   - position が開始位置より進んだ
+          // isBuffering は環境によって常に true のケースがあるため使わない
+          bool newPlayLoading = _playLoading;
+          if (_playLoading) {
+            final progressed = pos.inMilliseconds >
+                _playStartPos.inMilliseconds + 30;
+            if (nowPlaying || progressed) {
+              newPlayLoading = false;
+            }
+          }
+
+          if (pos != _currentTime ||
+              nowPlaying != _playing ||
+              newPlayLoading != _playLoading) {
             setState(() {
               _currentTime = pos;
               _playing = nowPlaying;
+              _playLoading = newPlayLoading;
             });
           }
         },
@@ -101,6 +133,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   @override
   void dispose() {
     _positionTimer?.cancel();
+    _playLoadingTimeout?.cancel();
     _videoController?.dispose();
     super.dispose();
   }
@@ -110,22 +143,60 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   void _togglePlayPause() {
     final ctrl = _videoController;
     if (ctrl == null) return;
-    setState(() {
-      if (ctrl.value.isPlaying) {
-        ctrl.pause();
+    _playLoadingTimeout?.cancel();
+    if (ctrl.value.isPlaying) {
+      ctrl.pause();
+      setState(() {
         _playing = false;
-      } else {
-        ctrl.play();
+        _playLoading = false;
+      });
+    } else {
+      setState(() {
         _playing = true;
-      }
-    });
+        _playLoading = true;
+        _playStartPos = _currentTime;
+      });
+      ctrl.play();
+      // 1.5秒たってもローディングが解けなかったら強制解除
+      _playLoadingTimeout = Timer(
+        const Duration(milliseconds: 1500),
+        () {
+          if (!mounted) return;
+          if (_playLoading) {
+            setState(() => _playLoading = false);
+          }
+        },
+      );
+    }
   }
 
   void _seekTo(Duration time) {
     final ctrl = _videoController;
     if (ctrl == null) return;
-    ctrl.seekTo(time);
-    setState(() => _currentTime = time);
+    // UI の時刻表示は即座に更新
+    final clamped = Duration(
+      milliseconds:
+          time.inMilliseconds.clamp(0, _totalDuration.inMilliseconds),
+    );
+    setState(() => _currentTime = clamped);
+    // 実際のシークはキューを畳み込み、最新値のみ反映
+    _pendingSeek = clamped;
+    _drainSeek();
+  }
+
+  Future<void> _drainSeek() async {
+    if (_seeking) return; // 既に処理中。終わったら最新値を拾う
+    _seeking = true;
+    final ctrl = _videoController;
+    try {
+      while (_pendingSeek != null && ctrl != null) {
+        final next = _pendingSeek!;
+        _pendingSeek = null;
+        await ctrl.seekTo(next);
+      }
+    } finally {
+      _seeking = false;
+    }
   }
 
   // --- レイヤー管理 ---
@@ -168,6 +239,59 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         layer.startTime = layer.endTime;
       }
     });
+  }
+
+  /// 現在時刻にキーフレームを追加（既にある場合は何もしない）
+  void _addKeyframeAtCurrent(int layerIndex) {
+    if (layerIndex < 0 || layerIndex >= _project.layers.length) return;
+    final layer = _project.layers[layerIndex];
+    if (layer.keyframes.isEmpty) return;
+    // 既に近い時刻にキーフレームがあれば何もしない
+    const toleranceMs = 100;
+    for (final kf in layer.keyframes) {
+      if ((kf.time.inMilliseconds - _currentTime.inMilliseconds).abs() <=
+          toleranceMs) {
+        return;
+      }
+    }
+    setState(() {
+      final state = layer.getStateAt(_currentTime);
+      layer.addKeyframe(Keyframe(
+        time: _currentTime,
+        position: state.position,
+        size: state.size,
+        rotation: state.rotation,
+        intensity: state.intensity,
+      ));
+    });
+  }
+
+  /// 指定したキーフレームを削除（ただし最後の1つは削除できない）
+  void _deleteKeyframe(int layerIndex, int keyframeIndex) {
+    if (layerIndex < 0 || layerIndex >= _project.layers.length) return;
+    final layer = _project.layers[layerIndex];
+    if (keyframeIndex < 0 || keyframeIndex >= layer.keyframes.length) return;
+    if (layer.keyframes.length <= 1) return; // 最後の1つは消せない
+    setState(() {
+      layer.removeKeyframeAt(keyframeIndex);
+    });
+  }
+
+  /// 現在時刻のキーフレームを削除
+  void _deleteKeyframeAtCurrent(int layerIndex) {
+    if (layerIndex < 0 || layerIndex >= _project.layers.length) return;
+    final layer = _project.layers[layerIndex];
+    if (layer.keyframes.length <= 1) return;
+    const toleranceMs = 150;
+    for (int i = 0; i < layer.keyframes.length; i++) {
+      if ((layer.keyframes[i].time.inMilliseconds -
+                  _currentTime.inMilliseconds)
+              .abs() <=
+          toleranceMs) {
+        setState(() => layer.removeKeyframeAt(i));
+        return;
+      }
+    }
   }
 
   Future<void> _deleteLayer(int index) async {
@@ -517,53 +641,109 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   }
 
   Widget _buildEditor() {
-    return SafeArea(
-      top: true,
-      bottom: false,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-            child: TopToolbar(
-              title: '動画エディタ',
-              onBack: _handleBack,
-              onAddLayer: _addLayer,
-              onSave: _saveVideo,
-              isSaving: _saving,
-              layerCount: _project.layers.length,
+    final topInset = MediaQuery.of(context).padding.top;
+    final topMargin = topInset + 60;
+
+    final playbackBar = CompactPlaybackBar(
+      isPlaying: _playing,
+      isLoading: _playLoading,
+      currentTime: _currentTime,
+      totalDuration: _totalDuration,
+      onTogglePlay: _togglePlayPause,
+      onSeek: _seekTo,
+    );
+
+    final bottomSheet = EditorBottomSheet(
+      selectedLayer: _project.selectedLayer,
+      layers: _project.layers,
+      selectedIndex: _project.selectedLayerIndex,
+      onTypeChanged: _onTypeChanged,
+      onShapeChanged: _onShapeChanged,
+      onIntensityChanged: _onIntensityChanged,
+      onSelectLayer: _selectLayer,
+      onAddLayer: _addLayer,
+      onDeleteLayer: _deleteLayer,
+      onToggleVisibility: _toggleVisibility,
+      onReorderLayers: _reorderLayers,
+      showTimeRange: true,
+      currentTime: _currentTime,
+      totalDuration: _totalDuration,
+      onSetStart: _setLayerStart,
+      onSetEnd: _setLayerEnd,
+      onSeekTo: _seekTo,
+      onAddKeyframeAtCurrent: _addKeyframeAtCurrent,
+      onDeleteKeyframeAtCurrent: _deleteKeyframeAtCurrent,
+      onDeleteKeyframe: _deleteKeyframe,
+    );
+
+    return Stack(
+      children: [
+        Column(
+          children: [
+            SizedBox(height: topMargin),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: _buildCanvas(),
+              ),
+            ),
+            // 縮小モード：通常のカラム配置（キャンバスが圧迫される）
+            if (_viewMode == VideoViewMode.shrink) ...[
+              playbackBar,
+              bottomSheet,
+            ],
+          ],
+        ),
+        // 固定モード：再生バー + ボトムシートをキャンバスに被せる
+        if (_viewMode == VideoViewMode.fixed)
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(
+              ignoring: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [playbackBar, bottomSheet],
+              ),
             ),
           ),
-          const SizedBox(height: 6),
-          Expanded(child: _buildCanvas()),
-          CompactPlaybackBar(
-            isPlaying: _playing,
-            currentTime: _currentTime,
-            totalDuration: _totalDuration,
-            onTogglePlay: _togglePlayPause,
-            onSeek: _seekTo,
+        // FAB
+        FloatingActionButtonRow(
+          onBack: _handleBack,
+          onSave: _saveVideo,
+          isSaving: _saving,
+        ),
+        // モード切替ボタン（FABの下）
+        Positioned(
+          top: topInset + 60,
+          left: 0,
+          right: 0,
+          child: ViewModeToggle(
+            mode: _viewMode,
+            anchor: _anchor,
+            onModeChanged: (m) => setState(() => _viewMode = m),
+            onAnchorChanged: (a) => setState(() => _anchor = a),
           ),
-          EditorBottomSheet(
-            selectedLayer: _project.selectedLayer,
-            layers: _project.layers,
-            selectedIndex: _project.selectedLayerIndex,
-            onTypeChanged: _onTypeChanged,
-            onShapeChanged: _onShapeChanged,
-            onIntensityChanged: _onIntensityChanged,
-            onSelectLayer: _selectLayer,
-            onAddLayer: _addLayer,
-            onDeleteLayer: _deleteLayer,
-            onToggleVisibility: _toggleVisibility,
-            onReorderLayers: _reorderLayers,
-            showTimeRange: true,
-            currentTime: _currentTime,
-            totalDuration: _totalDuration,
-            onSetStart: _setLayerStart,
-            onSetEnd: _setLayerEnd,
-            onSeekTo: _seekTo,
-          ),
-        ],
-      ),
+        ),
+      ],
     );
+  }
+
+  /// 固定モード時、キャンバスを縦方向にシフトする量（-は上、+は下）
+  double _verticalShift(double canvasHeight) {
+    if (_viewMode == VideoViewMode.shrink) return 0;
+    switch (_anchor) {
+      case VerticalAnchor.top:
+        // 動画の上部を可視領域に：シフト 0（元の位置で上が見える）
+        return 0;
+      case VerticalAnchor.center:
+        // 動画を上に 25% 移動して中央を可視領域に
+        return -canvasHeight * 0.22;
+      case VerticalAnchor.bottom:
+        // 動画を上に 45% 移動して下部を可視領域に
+        return -canvasHeight * 0.42;
+    }
   }
 
   Widget _buildCanvas() {
@@ -574,8 +754,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         final scale = _fitScale(canvasSize);
         final videoRect = _videoRect(canvasSize);
         final ctrl = _videoController;
+        final shiftY = _verticalShift(canvasSize.height);
 
-        return GestureDetector(
+        return Transform.translate(
+          offset: Offset(0, shiftY),
+          child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: _deselectLayer,
           child: Stack(
@@ -662,6 +845,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                   ),
                 ),
             ],
+          ),
           ),
         );
       },

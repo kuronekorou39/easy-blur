@@ -28,6 +28,9 @@ class EditorBottomSheet extends StatefulWidget {
   final ValueChanged<int>? onSetStart;
   final ValueChanged<int>? onSetEnd;
   final ValueChanged<Duration>? onSeekTo;
+  final ValueChanged<int>? onAddKeyframeAtCurrent;
+  final ValueChanged<int>? onDeleteKeyframeAtCurrent;
+  final void Function(int layerIndex, int keyframeIndex)? onDeleteKeyframe;
 
   const EditorBottomSheet({
     super.key,
@@ -48,6 +51,9 @@ class EditorBottomSheet extends StatefulWidget {
     this.onSetStart,
     this.onSetEnd,
     this.onSeekTo,
+    this.onAddKeyframeAtCurrent,
+    this.onDeleteKeyframeAtCurrent,
+    this.onDeleteKeyframe,
   });
 
   @override
@@ -168,6 +174,11 @@ class _EditorBottomSheetState extends State<EditorBottomSheet>
                           onSetStart: widget.onSetStart,
                           onSetEnd: widget.onSetEnd,
                           onSeekTo: widget.onSeekTo,
+                          onAddKeyframeAtCurrent:
+                              widget.onAddKeyframeAtCurrent,
+                          onDeleteKeyframeAtCurrent:
+                              widget.onDeleteKeyframeAtCurrent,
+                          onDeleteKeyframe: widget.onDeleteKeyframe,
                         ),
                       ),
                     SizedBox(height: bottomInset > 0 ? bottomInset : 0),

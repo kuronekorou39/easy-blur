@@ -7,8 +7,8 @@ import '../models/models.dart';
 import '../painters/mosaic_painter.dart';
 import '../utils/theme.dart';
 import '../widgets/editor_bottom_sheet.dart';
+import '../widgets/floating_action_button_row.dart';
 import '../widgets/mosaic_overlay.dart';
-import '../widgets/top_toolbar.dart';
 
 class ImageEditorScreen extends StatefulWidget {
   final EditorProject project;
@@ -418,39 +418,42 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
   }
 
   Widget _buildEditor() {
-    return SafeArea(
-      top: true,
-      bottom: false,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-            child: TopToolbar(
-              title: '画像エディタ',
-              onBack: _handleBack,
-              onAddLayer: _addLayer,
-              onSave: _saveImage,
-              isSaving: _saving,
-              layerCount: _project.layers.length,
+    final topInset = MediaQuery.of(context).padding.top;
+    // 上部余白: SafeArea + フローティングボタン高 + 余白
+    final topMargin = topInset + 60;
+    return Stack(
+      children: [
+        Column(
+          children: [
+            SizedBox(height: topMargin),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: _buildCanvas(),
+              ),
             ),
-          ),
-          const SizedBox(height: 6),
-          Expanded(child: _buildCanvas()),
-          EditorBottomSheet(
-            selectedLayer: _project.selectedLayer,
-            layers: _project.layers,
-            selectedIndex: _project.selectedLayerIndex,
-            onTypeChanged: _onTypeChanged,
-            onShapeChanged: _onShapeChanged,
-            onIntensityChanged: _onIntensityChanged,
-            onSelectLayer: _selectLayer,
-            onAddLayer: _addLayer,
-            onDeleteLayer: _deleteLayer,
-            onToggleVisibility: _toggleVisibility,
-            onReorderLayers: _reorderLayers,
-          ),
-        ],
-      ),
+            EditorBottomSheet(
+              selectedLayer: _project.selectedLayer,
+              layers: _project.layers,
+              selectedIndex: _project.selectedLayerIndex,
+              onTypeChanged: _onTypeChanged,
+              onShapeChanged: _onShapeChanged,
+              onIntensityChanged: _onIntensityChanged,
+              onSelectLayer: _selectLayer,
+              onAddLayer: _addLayer,
+              onDeleteLayer: _deleteLayer,
+              onToggleVisibility: _toggleVisibility,
+              onReorderLayers: _reorderLayers,
+            ),
+          ],
+        ),
+        // フローティング戻る/保存ボタン
+        FloatingActionButtonRow(
+          onBack: _handleBack,
+          onSave: _saveImage,
+          isSaving: _saving,
+        ),
+      ],
     );
   }
 
