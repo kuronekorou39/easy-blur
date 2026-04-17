@@ -3,12 +3,15 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../models/models.dart';
 
+/// 画像レイヤー上にモザイクを描画するペインター
+/// キャンバスサイズに合わせてアスペクト比を保持して画像を中央描画する
 class MosaicPainter extends CustomPainter {
   final ui.Image? mediaImage;
   final List<MosaicLayer> layers;
   final Duration currentTime;
   final Size mediaSize;
   final int? selectedLayerIndex;
+  final bool isPreview;
 
   MosaicPainter({
     required this.mediaImage,
@@ -16,22 +19,40 @@ class MosaicPainter extends CustomPainter {
     required this.currentTime,
     required this.mediaSize,
     this.selectedLayerIndex,
+    this.isPreview = true,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (mediaImage == null) return;
+    if (mediaImage == null || mediaSize.isEmpty) return;
+
+    // BoxFit.contain 相当の描画領域を計算
+    final scale = _fitScale(size);
+    final imgW = mediaSize.width * scale;
+    final imgH = mediaSize.height * scale;
+    final left = (size.width - imgW) / 2;
+    final top = (size.height - imgH) / 2;
+    final dst = Rect.fromLTWH(left, top, imgW, imgH);
+
+    // 画像の周囲に微かな影を描画（プレビューの奥行き感、保存時はスキップ）
+    if (isPreview) {
+      final shadowPaint = Paint()
+        ..color = Colors.black.withValues(alpha: 0.45)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16);
+      canvas.drawRect(dst.inflate(2), shadowPaint);
+    }
 
     final src = Rect.fromLTWH(
-      0, 0,
+      0,
+      0,
       mediaImage!.width.toDouble(),
       mediaImage!.height.toDouble(),
     );
-    final dst = Rect.fromLTWH(0, 0, size.width, size.height);
     canvas.drawImageRect(mediaImage!, src, dst, Paint());
 
-    final scaleX = size.width / mediaSize.width;
-    final scaleY = size.height / mediaSize.height;
+    // 画像外へのクリップ（モザイクが画像領域外へはみ出さないように）
+    canvas.save();
+    canvas.clipRect(dst);
 
     for (int i = 0; i < layers.length; i++) {
       final layer = layers[i];
@@ -40,29 +61,49 @@ class MosaicPainter extends CustomPainter {
       final state = layer.getStateAt(currentTime);
       _drawMosaicRegion(
         canvas,
-        size,
+        dst,
+        scale,
         layer,
         state,
-        scaleX,
-        scaleY,
         isSelected: i == selectedLayerIndex,
       );
     }
+
+    canvas.restore();
+
+    // 選択ハンドルはクリップの外で描画（画像外にはみ出すこともあるため）
+    for (int i = 0; i < layers.length; i++) {
+      if (i != selectedLayerIndex) continue;
+      final layer = layers[i];
+      if (!layer.visible || layer.keyframes.isEmpty) continue;
+      final state = layer.getStateAt(currentTime);
+      final cx = dst.left + state.position.dx * scale;
+      final cy = dst.top + state.position.dy * scale;
+      final w = state.size.width * scale;
+      final h = state.size.height * scale;
+      final rect = Rect.fromCenter(center: Offset(cx, cy), width: w, height: h);
+      _drawSelection(canvas, rect, state, cx, cy);
+    }
+  }
+
+  double _fitScale(Size canvasSize) {
+    final sx = canvasSize.width / mediaSize.width;
+    final sy = canvasSize.height / mediaSize.height;
+    return sx < sy ? sx : sy;
   }
 
   void _drawMosaicRegion(
     Canvas canvas,
-    Size canvasSize,
+    Rect imageDst,
+    double scale,
     MosaicLayer layer,
-    Keyframe state,
-    double scaleX,
-    double scaleY, {
+    Keyframe state, {
     bool isSelected = false,
   }) {
-    final cx = state.position.dx * scaleX;
-    final cy = state.position.dy * scaleY;
-    final w = state.size.width * scaleX;
-    final h = state.size.height * scaleY;
+    final cx = imageDst.left + state.position.dx * scale;
+    final cy = imageDst.top + state.position.dy * scale;
+    final w = state.size.width * scale;
+    final h = state.size.height * scale;
     final rect = Rect.fromCenter(center: Offset(cx, cy), width: w, height: h);
 
     canvas.save();
@@ -70,7 +111,7 @@ class MosaicPainter extends CustomPainter {
     canvas.rotate(state.rotation);
     canvas.translate(-cx, -cy);
 
-    // Clip to shape
+    // 形状でクリップ
     final path = Path();
     if (layer.shape == MosaicShape.ellipse) {
       path.addOval(rect);
@@ -79,13 +120,12 @@ class MosaicPainter extends CustomPainter {
     }
     canvas.clipPath(path);
 
-    // Draw mosaic effect
     switch (layer.type) {
       case MosaicType.pixelate:
-        _drawPixelate(canvas, rect, state.intensity, scaleX);
+        _drawPixelate(canvas, rect, state.intensity, scale);
         break;
       case MosaicType.blur:
-        _drawBlur(canvas, rect, state.intensity, canvasSize);
+        _drawBlur(canvas, rect, state.intensity, imageDst);
         break;
       case MosaicType.blackout:
         canvas.drawRect(rect, Paint()..color = Colors.black);
@@ -93,10 +133,6 @@ class MosaicPainter extends CustomPainter {
     }
 
     canvas.restore();
-
-    if (isSelected) {
-      _drawSelection(canvas, rect, state, cx, cy);
-    }
   }
 
   void _drawPixelate(
@@ -116,19 +152,19 @@ class MosaicPainter extends CustomPainter {
   }
 
   void _drawBlur(
-      Canvas canvas, Rect rect, double intensity, Size canvasSize) {
+      Canvas canvas, Rect rect, double intensity, Rect imageDst) {
     final sigma = max(1.0, intensity * 0.8);
     final paint = Paint()
       ..imageFilter = ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma);
     canvas.saveLayer(rect, paint);
     if (mediaImage != null) {
       final src = Rect.fromLTWH(
-        0, 0,
+        0,
+        0,
         mediaImage!.width.toDouble(),
         mediaImage!.height.toDouble(),
       );
-      final dst = Rect.fromLTWH(0, 0, canvasSize.width, canvasSize.height);
-      canvas.drawImageRect(mediaImage!, src, dst, Paint());
+      canvas.drawImageRect(mediaImage!, src, imageDst, Paint());
     }
     canvas.restore();
   }
@@ -145,24 +181,28 @@ class MosaicPainter extends CustomPainter {
     canvas.rotate(state.rotation);
     canvas.translate(-cx, -cy);
 
-    const accentColor = Color(0xFF6c5ce7);
+    const accentColor = Color(0xFF7C6FF0);
 
-    // Dashed border
+    // 破線ボーダー
     final borderPaint = Paint()
       ..color = accentColor
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
+      ..strokeWidth = 1.8;
 
     final inflated = rect.inflate(2);
-    _drawDashedRect(canvas, inflated, borderPaint, dashLength: 6, gapLength: 4);
+    _drawDashedRect(canvas, inflated, borderPaint,
+        dashLength: 7, gapLength: 4);
 
-    // Corner handles (larger, rounded)
-    const handleRadius = 7.0;
+    // コーナーハンドル
+    const handleRadius = 8.0;
     final handleFill = Paint()..color = Colors.white;
     final handleStroke = Paint()
       ..color = accentColor
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0;
+      ..strokeWidth = 2.2;
+    final handleShadow = Paint()
+      ..color = Colors.black.withValues(alpha: 0.35)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
 
     final corners = [
       inflated.topLeft,
@@ -171,12 +211,13 @@ class MosaicPainter extends CustomPainter {
       inflated.bottomRight,
     ];
     for (final corner in corners) {
+      canvas.drawCircle(corner, handleRadius + 1, handleShadow);
       canvas.drawCircle(corner, handleRadius, handleFill);
       canvas.drawCircle(corner, handleRadius, handleStroke);
     }
 
-    // Edge midpoint handles (smaller)
-    const edgeRadius = 4.0;
+    // エッジ中点の小ハンドル
+    const edgeRadius = 4.5;
     final edges = [
       Offset(inflated.center.dx, inflated.top),
       Offset(inflated.center.dx, inflated.bottom),
@@ -188,46 +229,6 @@ class MosaicPainter extends CustomPainter {
       canvas.drawCircle(edge, edgeRadius, handleStroke);
     }
 
-    // Rotation handle (top center, connected by line)
-    final rotateAnchor = Offset(inflated.center.dx, inflated.top);
-    final rotateHandle =
-        Offset(inflated.center.dx, inflated.top - 30);
-
-    canvas.drawLine(
-      rotateAnchor,
-      rotateHandle,
-      Paint()
-        ..color = accentColor.withAlpha(150)
-        ..strokeWidth = 1.5,
-    );
-
-    canvas.drawCircle(rotateHandle, 8, handleFill);
-    canvas.drawCircle(rotateHandle, 8, handleStroke);
-
-    // Rotation icon inside handle
-    final iconPaint = Paint()
-      ..color = accentColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5
-      ..strokeCap = StrokeCap.round;
-    final iconCenter = rotateHandle;
-    const iconR = 4.0;
-    final iconRect =
-        Rect.fromCircle(center: iconCenter, radius: iconR);
-    canvas.drawArc(iconRect, -pi / 2, pi * 1.4, false, iconPaint);
-    // Arrow tip
-    final arrowEnd = Offset(
-      iconCenter.dx + iconR * cos(-pi / 2 + pi * 1.4),
-      iconCenter.dy + iconR * sin(-pi / 2 + pi * 1.4),
-    );
-    final arrowDir = pi * 1.4 - pi / 2 + pi / 2;
-    canvas.drawLine(
-      arrowEnd,
-      Offset(arrowEnd.dx + 3 * cos(arrowDir - 0.6),
-          arrowEnd.dy + 3 * sin(arrowDir - 0.6)),
-      iconPaint,
-    );
-
     canvas.restore();
   }
 
@@ -235,16 +236,12 @@ class MosaicPainter extends CustomPainter {
       Canvas canvas, Rect rect, Paint paint,
       {double dashLength = 6, double gapLength = 4}) {
     final totalDash = dashLength + gapLength;
-    // Top
     _drawDashedLine(canvas, rect.topLeft, rect.topRight, paint, totalDash,
         dashLength);
-    // Right
     _drawDashedLine(canvas, rect.topRight, rect.bottomRight, paint,
         totalDash, dashLength);
-    // Bottom
     _drawDashedLine(canvas, rect.bottomRight, rect.bottomLeft, paint,
         totalDash, dashLength);
-    // Left
     _drawDashedLine(canvas, rect.bottomLeft, rect.topLeft, paint,
         totalDash, dashLength);
   }
@@ -253,6 +250,7 @@ class MosaicPainter extends CustomPainter {
       double totalDash, double dashLength) {
     final delta = end - start;
     final length = delta.distance;
+    if (length == 0) return;
     final dir = Offset(delta.dx / length, delta.dy / length);
     double drawn = 0;
     while (drawn < length) {
@@ -268,9 +266,8 @@ class MosaicPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant MosaicPainter oldDelegate) {
-    return oldDelegate.mediaImage != mediaImage ||
-        oldDelegate.currentTime != currentTime ||
-        oldDelegate.layers != layers ||
-        oldDelegate.selectedLayerIndex != selectedLayerIndex;
+    // レイヤー内部プロパティ（type/shape/intensity等）の変更を確実に検出するため、
+    // 常に再描画させる。画像編集用途では再描画コストより即時反映を優先。
+    return true;
   }
 }

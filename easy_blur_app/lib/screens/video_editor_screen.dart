@@ -1,12 +1,16 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' as ui;
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:gal/gal.dart';
 import 'package:video_player/video_player.dart';
 import '../models/models.dart';
 import '../utils/theme.dart';
+import '../utils/video_exporter.dart';
+import '../widgets/compact_playback_bar.dart';
+import '../widgets/editor_bottom_sheet.dart';
+import '../widgets/mosaic_overlay.dart';
 import '../widgets/top_toolbar.dart';
-import '../widgets/video_editor_bottom_sheet.dart';
 
 class VideoEditorScreen extends StatefulWidget {
   final EditorProject project;
@@ -17,123 +21,179 @@ class VideoEditorScreen extends StatefulWidget {
   State<VideoEditorScreen> createState() => _VideoEditorScreenState();
 }
 
-class _VideoEditorScreenState extends State<VideoEditorScreen>
-    with TickerProviderStateMixin {
+class _VideoEditorScreenState extends State<VideoEditorScreen> {
   late EditorProject _project;
-  late VideoPlayerController _videoController;
+  VideoPlayerController? _videoController;
   bool _loading = true;
+  String? _loadError;
   bool _playing = false;
+  bool _saving = false;
+  double _saveProgress = 0.0;
   Duration _currentTime = Duration.zero;
   Duration _totalDuration = Duration.zero;
   Timer? _positionTimer;
   Size _videoSize = Size.zero;
-
-  // Viewport state
-  Offset _viewOffset = Offset.zero;
-  double _viewScale = 1.0;
-  Offset _scaleStartFocal = Offset.zero;
-  double _scaleStartScale = 1.0;
-  Offset _scaleStartOffset = Offset.zero;
-
-  // Gesture state
-  _GestureMode _gestureMode = _GestureMode.none;
-  Offset _lastFocal = Offset.zero;
-  Size? _resizeStartSize;
-  int _activeLayerIndex = -1;
-
-  // Double-tap reset
-  late final AnimationController _resetCtrl;
-  late Animation<double> _resetScale;
-  late Animation<Offset> _resetOffset;
+  int _rotationDegrees = 0;
 
   @override
   void initState() {
     super.initState();
     _project = widget.project;
-    _resetCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 300));
-    _resetCtrl.addListener(() {
-      setState(() {
-        _viewScale = _resetScale.value;
-        _viewOffset = _resetOffset.value;
-      });
-    });
     _initVideo();
   }
 
   Future<void> _initVideo() async {
-    _videoController =
-        VideoPlayerController.file(File(_project.mediaPath));
-    await _videoController.initialize();
+    try {
+      final file = File(_project.mediaPath);
+      if (!await file.exists()) {
+        throw Exception('ファイルが見つかりません: ${_project.mediaPath}');
+      }
+      final controller = VideoPlayerController.file(file);
+      await controller.initialize();
 
-    setState(() {
-      _totalDuration = _videoController.value.duration;
-      _project.videoDuration = _totalDuration;
-      _videoSize = Size(
-        _videoController.value.size.width,
-        _videoController.value.size.height,
+      if (!mounted) {
+        controller.dispose();
+        return;
+      }
+
+      // 回転メタデータを考慮した表示サイズを計算
+      final rawSize = controller.value.size;
+      final rotation = controller.value.rotationCorrection;
+      final displaySize = (rotation == 90 || rotation == 270)
+          ? Size(rawSize.height, rawSize.width)
+          : rawSize;
+
+      setState(() {
+        _videoController = controller;
+        _totalDuration = controller.value.duration;
+        _project.videoDuration = _totalDuration;
+        _videoSize = displaySize;
+        _rotationDegrees = rotation;
+        _loading = false;
+        _loadError = null;
+      });
+
+      _positionTimer = Timer.periodic(
+        const Duration(milliseconds: 50),
+        (_) {
+          if (!mounted) return;
+          final ctrl = _videoController;
+          if (ctrl == null) return;
+          final pos = ctrl.value.position;
+          final nowPlaying = ctrl.value.isPlaying;
+          if (pos != _currentTime || nowPlaying != _playing) {
+            setState(() {
+              _currentTime = pos;
+              _playing = nowPlaying;
+            });
+          }
+        },
       );
-      _loading = false;
-    });
-
-    _positionTimer = Timer.periodic(
-      const Duration(milliseconds: 50),
-      (_) {
-        if (!mounted) return;
-        final pos = _videoController.value.position;
-        if (pos != _currentTime) {
-          setState(() => _currentTime = pos);
-        }
-      },
-    );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadError = e.toString();
+      });
+    }
   }
 
   @override
   void dispose() {
     _positionTimer?.cancel();
-    _videoController.dispose();
-    _resetCtrl.dispose();
+    _videoController?.dispose();
     super.dispose();
   }
 
-  // --- Playback ---
+  // --- 再生制御 ---
 
   void _togglePlayPause() {
+    final ctrl = _videoController;
+    if (ctrl == null) return;
     setState(() {
-      if (_playing) {
-        _videoController.pause();
+      if (ctrl.value.isPlaying) {
+        ctrl.pause();
+        _playing = false;
       } else {
-        _videoController.play();
+        ctrl.play();
+        _playing = true;
       }
-      _playing = !_playing;
     });
   }
 
   void _seekTo(Duration time) {
-    _videoController.seekTo(time);
+    final ctrl = _videoController;
+    if (ctrl == null) return;
+    ctrl.seekTo(time);
     setState(() => _currentTime = time);
   }
 
-  // --- Layer management ---
+  // --- レイヤー管理 ---
 
   void _addLayer() {
     setState(() {
       final layer = _project.addLayer();
+      // 時間範囲：現在時刻から動画の終端まで
+      layer.startTime = _currentTime;
+      layer.endTime = _totalDuration > Duration.zero
+          ? _totalDuration
+          : const Duration(days: 1);
       layer.addKeyframe(Keyframe(
         time: _currentTime,
         position: Offset(_videoSize.width / 2, _videoSize.height / 2),
-        size: Size(_videoSize.width * 0.25, _videoSize.height * 0.2),
+        size: Size(_videoSize.width * 0.35, _videoSize.height * 0.22),
         intensity: 20,
       ));
     });
   }
 
-  void _deleteLayer(int index) {
-    setState(() => _project.removeLayer(index));
+  void _setLayerStart(int index) {
+    if (index < 0 || index >= _project.layers.length) return;
+    setState(() {
+      final layer = _project.layers[index];
+      layer.startTime = _currentTime;
+      // 開始が終了を越えたら終了を引き上げる
+      if (layer.startTime > layer.endTime) {
+        layer.endTime = layer.startTime;
+      }
+    });
+  }
+
+  void _setLayerEnd(int index) {
+    if (index < 0 || index >= _project.layers.length) return;
+    setState(() {
+      final layer = _project.layers[index];
+      layer.endTime = _currentTime;
+      if (layer.endTime < layer.startTime) {
+        layer.startTime = layer.endTime;
+      }
+    });
+  }
+
+  Future<void> _deleteLayer(int index) async {
+    final layer = _project.layers[index];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => _ConfirmDialog(
+        title: 'レイヤーを削除',
+        message: '"${layer.name}" を削除します。\nこの操作は元に戻せません。',
+        confirmLabel: '削除',
+        confirmColor: AppTheme.danger,
+      ),
+    );
+    if (confirmed == true && mounted) {
+      setState(() => _project.removeLayer(index));
+    }
   }
 
   void _selectLayer(int index) {
     setState(() => _project.selectedLayerIndex = index);
+  }
+
+  void _deselectLayer() {
+    if (_project.selectedLayerIndex >= 0) {
+      setState(() => _project.selectedLayerIndex = -1);
+    }
   }
 
   void _toggleVisibility(int index) {
@@ -163,387 +223,501 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
 
   void _onIntensityChanged(double value) {
     final layer = _project.selectedLayer;
-    if (layer == null || layer.keyframes.isEmpty) return;
-    Keyframe? closest;
-    int closestDist = 999999999;
+    if (layer == null) return;
+    // 全キーフレームに適用（動画全体で強度は統一）
+    setState(() {
+      for (final kf in layer.keyframes) {
+        kf.intensity = value;
+      }
+      if (layer.keyframes.isEmpty) {
+        layer.addKeyframe(Keyframe(
+          time: _currentTime,
+          position: Offset(_videoSize.width / 2, _videoSize.height / 2),
+          size: Size(_videoSize.width * 0.35, _videoSize.height * 0.22),
+          intensity: value,
+        ));
+      }
+    });
+  }
+
+  // --- 座標変換 ---
+
+  double _fitScale(Size canvasSize) {
+    if (_videoSize.isEmpty) return 1.0;
+    final sx = canvasSize.width / _videoSize.width;
+    final sy = canvasSize.height / _videoSize.height;
+    return sx < sy ? sx : sy;
+  }
+
+  Rect _videoRect(Size canvasSize) {
+    final scale = _fitScale(canvasSize);
+    final imgW = _videoSize.width * scale;
+    final imgH = _videoSize.height * scale;
+    final left = (canvasSize.width - imgW) / 2;
+    final top = (canvasSize.height - imgH) / 2;
+    return Rect.fromLTWH(left, top, imgW, imgH);
+  }
+
+  Rect _layerCanvasRect(MosaicLayer layer, Rect videoRect, double scale) {
+    if (layer.keyframes.isEmpty) return Rect.zero;
+    final state = layer.getStateAt(_currentTime);
+    final cx = videoRect.left + state.position.dx * scale;
+    final cy = videoRect.top + state.position.dy * scale;
+    final w = state.size.width * scale;
+    final h = state.size.height * scale;
+    return Rect.fromCenter(center: Offset(cx, cy), width: w, height: h);
+  }
+
+  /// 現在時刻に対応するキーフレームを取得または作成
+  Keyframe _getOrCreateKeyframeAt(MosaicLayer layer, Duration time) {
+    const toleranceMs = 200; // この時間内のキーフレームを同一とみなす
     for (final kf in layer.keyframes) {
-      final dist =
-          (kf.time.inMilliseconds - _currentTime.inMilliseconds).abs();
-      if (dist < closestDist) {
-        closestDist = dist;
-        closest = kf;
+      if ((kf.time.inMilliseconds - time.inMilliseconds).abs() <=
+          toleranceMs) {
+        return kf;
       }
     }
-    if (closest != null) {
-      setState(() => closest!.intensity = value);
-    }
-  }
-
-  void _addKeyframeToLayer(int layerIndex) {
-    final layer = _project.layers[layerIndex];
-    final current = layer.getStateAt(_currentTime);
-    setState(() {
-      layer.addKeyframe(Keyframe(
-        time: _currentTime,
-        position: current.position,
-        size: current.size,
-        rotation: current.rotation,
-        intensity: current.intensity,
-      ));
-    });
-  }
-
-  void _selectKeyframe(int layerIndex, int keyframeIndex) {
-    _selectLayer(layerIndex);
-    final kf = _project.layers[layerIndex].keyframes[keyframeIndex];
-    _seekTo(kf.time);
-  }
-
-  void _deleteKeyframe(int layerIndex, int keyframeIndex) {
-    setState(() {
-      _project.layers[layerIndex].removeKeyframeAt(keyframeIndex);
-    });
-  }
-
-  // --- Coordinate conversion ---
-
-  Offset _screenToVideo(Offset screenPos, Size canvasSize) {
-    final center = Offset(canvasSize.width / 2, canvasSize.height / 2);
-    final adjusted = (screenPos - center - _viewOffset) / _viewScale + center;
-    return Offset(
-      adjusted.dx / canvasSize.width * _videoSize.width,
-      adjusted.dy / canvasSize.height * _videoSize.height,
+    // 新規作成
+    final state = layer.getStateAt(time);
+    final newKf = Keyframe(
+      time: time,
+      position: state.position,
+      size: state.size,
+      rotation: state.rotation,
+      intensity: state.intensity,
     );
+    layer.addKeyframe(newKf);
+    return newKf;
   }
 
-  int _hitTestLayers(Offset vidPos) {
-    for (int i = _project.layers.length - 1; i >= 0; i--) {
-      final layer = _project.layers[i];
-      if (!layer.visible || layer.keyframes.isEmpty) continue;
-      final st = layer.getStateAt(_currentTime);
-      final dx = (vidPos.dx - st.position.dx).abs();
-      final dy = (vidPos.dy - st.position.dy).abs();
-      if (dx < st.size.width / 2 + 20 && dy < st.size.height / 2 + 20) {
-        return i;
+  void _moveLayer(int index, Offset canvasDelta, double scale) {
+    if (index < 0 || index >= _project.layers.length) return;
+    final layer = _project.layers[index];
+    if (layer.keyframes.isEmpty) return;
+    setState(() {
+      final kf = _getOrCreateKeyframeAt(layer, _currentTime);
+      kf.position = Offset(
+        (kf.position.dx + canvasDelta.dx / scale)
+            .clamp(0, _videoSize.width),
+        (kf.position.dy + canvasDelta.dy / scale)
+            .clamp(0, _videoSize.height),
+      );
+    });
+  }
+
+  void _resizeLayer(
+      int index, Offset canvasDelta, HandleCorner corner, double scale) {
+    if (index < 0 || index >= _project.layers.length) return;
+    final layer = _project.layers[index];
+    if (layer.keyframes.isEmpty) return;
+
+    final imgDx = canvasDelta.dx / scale;
+    final imgDy = canvasDelta.dy / scale;
+
+    double widthSign = 0, heightSign = 0;
+    switch (corner) {
+      case HandleCorner.topLeft:
+        widthSign = -1;
+        heightSign = -1;
+        break;
+      case HandleCorner.topRight:
+        widthSign = 1;
+        heightSign = -1;
+        break;
+      case HandleCorner.bottomLeft:
+        widthSign = -1;
+        heightSign = 1;
+        break;
+      case HandleCorner.bottomRight:
+        widthSign = 1;
+        heightSign = 1;
+        break;
+    }
+
+    setState(() {
+      final kf = _getOrCreateKeyframeAt(layer, _currentTime);
+      final newW = (kf.size.width + imgDx * widthSign)
+          .clamp(20.0, _videoSize.width);
+      final newH = (kf.size.height + imgDy * heightSign)
+          .clamp(20.0, _videoSize.height);
+      final actualDw = newW - kf.size.width;
+      final actualDh = newH - kf.size.height;
+      kf.size = Size(newW, newH);
+      kf.position = Offset(
+        kf.position.dx + (actualDw * widthSign) / 2,
+        kf.position.dy + (actualDh * heightSign) / 2,
+      );
+    });
+  }
+
+  // --- 動画保存（ネイティブ Kotlin + MediaCodec でモザイクを焼き込み）---
+
+  Future<void> _saveVideo() async {
+    if (_videoController == null || _saving) return;
+
+    if (_videoController!.value.isPlaying) {
+      _videoController!.pause();
+      setState(() => _playing = false);
+    }
+
+    setState(() {
+      _saving = true;
+      _saveProgress = 0.0;
+    });
+
+    try {
+      final outPath = await VideoExporter.export(
+        project: _project,
+        videoSize: _videoSize,
+        rotationDegrees: _rotationDegrees,
+        onProgress: (p) {
+          if (mounted) setState(() => _saveProgress = p);
+        },
+      );
+
+      // ギャラリーへ保存
+      final hasAccess = await Gal.hasAccess(toAlbum: true);
+      if (!hasAccess) {
+        final granted = await Gal.requestAccess(toAlbum: true);
+        if (!granted) {
+          throw Exception('ギャラリーへのアクセスが許可されていません');
+        }
+      }
+      await Gal.putVideo(outPath, album: 'Easy Blur');
+
+      // 一時ファイル削除
+      try {
+        await File(outPath).delete();
+      } catch (_) {}
+
+      if (mounted) {
+        _showSnack(
+          icon: Icons.check_circle_rounded,
+          message: '動画を保存しました',
+          detail: '写真アプリの「Easy Blur」アルバム',
+          color: AppTheme.success,
+        );
+      }
+    } on GalException catch (e) {
+      if (mounted) {
+        _showSnack(
+          icon: Icons.error_outline_rounded,
+          message: '保存に失敗しました',
+          detail: e.type.message,
+          color: AppTheme.danger,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        _showSnack(
+          icon: Icons.error_outline_rounded,
+          message: '保存に失敗しました',
+          detail: e.toString(),
+          color: AppTheme.danger,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _saveProgress = 0.0;
+        });
       }
     }
-    return -1;
   }
 
-  bool _isNearCorner(Offset vidPos, Keyframe state) {
-    final corners = [
-      Offset(state.position.dx + state.size.width / 2,
-          state.position.dy + state.size.height / 2),
-      Offset(state.position.dx - state.size.width / 2,
-          state.position.dy - state.size.height / 2),
-      Offset(state.position.dx + state.size.width / 2,
-          state.position.dy - state.size.height / 2),
-      Offset(state.position.dx - state.size.width / 2,
-          state.position.dy + state.size.height / 2),
-    ];
-    final threshold = _videoSize.shortestSide * 0.06;
-    return corners.any((c) => (vidPos - c).distance < threshold);
+  void _showSnack({
+    required IconData icon,
+    required String message,
+    String? detail,
+    required Color color,
+  }) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(icon, color: color, size: 22),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(message,
+                        style: AppTheme.textBodyStrong.copyWith(
+                            color: AppTheme.textPrimary)),
+                    if (detail != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        detail,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.textCaption,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: AppTheme.bgElevated,
+          elevation: 8,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+            side: BorderSide(color: color.withValues(alpha: 0.4)),
+          ),
+          margin: EdgeInsets.fromLTRB(
+            16,
+            0,
+            16,
+            MediaQuery.of(context).size.height * 0.12,
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
   }
 
-  // --- Gesture handlers ---
-
-  void _onScaleStart(ScaleStartDetails details, Size canvasSize) {
-    _scaleStartFocal = details.focalPoint;
-    _scaleStartScale = _viewScale;
-    _scaleStartOffset = _viewOffset;
-    _lastFocal = details.focalPoint;
-
-    if (details.pointerCount >= 2) {
-      _gestureMode = _GestureMode.viewportZoom;
+  Future<void> _handleBack() async {
+    if (_project.layers.isEmpty) {
+      if (mounted) Navigator.of(context).pop();
       return;
     }
-
-    final localPos = details.localFocalPoint;
-    final vidPos = _screenToVideo(localPos, canvasSize);
-    final hitIndex = _hitTestLayers(vidPos);
-
-    if (hitIndex >= 0) {
-      _activeLayerIndex = hitIndex;
-      setState(() => _project.selectedLayerIndex = hitIndex);
-      final state = _project.layers[hitIndex].getStateAt(_currentTime);
-
-      if (_isNearCorner(vidPos, state)) {
-        _gestureMode = _GestureMode.resizeObject;
-        _resizeStartSize = state.size;
-      } else {
-        _gestureMode = _GestureMode.moveObject;
-      }
-    } else {
-      _gestureMode = _GestureMode.viewportPan;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => const _ConfirmDialog(
+        title: '編集を破棄',
+        message: '現在の編集内容は失われます。\nホームに戻りますか？',
+        confirmLabel: '破棄して戻る',
+        confirmColor: AppTheme.danger,
+      ),
+    );
+    if (confirmed == true && mounted) {
+      Navigator.of(context).pop();
     }
   }
 
-  void _onScaleUpdate(ScaleUpdateDetails details, Size canvasSize) {
-    switch (_gestureMode) {
-      case _GestureMode.viewportZoom:
-        setState(() {
-          _viewScale =
-              (_scaleStartScale * details.scale).clamp(0.5, 5.0);
-          _viewOffset = _scaleStartOffset +
-              (details.focalPoint - _scaleStartFocal);
-        });
-        break;
-
-      case _GestureMode.viewportPan:
-        setState(() {
-          _viewOffset += details.focalPoint - _lastFocal;
-        });
-        break;
-
-      case _GestureMode.moveObject:
-        final layer = _project.layers[_activeLayerIndex];
-        if (layer.keyframes.isEmpty) break;
-
-        // Find or create keyframe at current time
-        Keyframe? kf;
-        for (final k in layer.keyframes) {
-          if ((k.time.inMilliseconds - _currentTime.inMilliseconds)
-                  .abs() <
-              100) {
-            kf = k;
-            break;
-          }
-        }
-        if (kf == null) {
-          kf = layer.getStateAt(_currentTime).copyWith(time: _currentTime);
-          layer.addKeyframe(kf);
-        }
-
-        final delta = details.focalPoint - _lastFocal;
-        final canvasScale = canvasSize.width / _videoSize.width;
-        final vidDelta = Offset(
-          delta.dx / (canvasScale * _viewScale),
-          delta.dy / (canvasScale * _viewScale),
-        );
-        setState(() {
-          kf!.position = Offset(
-            kf.position.dx + vidDelta.dx,
-            kf.position.dy + vidDelta.dy,
-          );
-        });
-        break;
-
-      case _GestureMode.resizeObject:
-        final layer = _project.layers[_activeLayerIndex];
-        if (layer.keyframes.isEmpty || _resizeStartSize == null) break;
-
-        Keyframe? kf;
-        for (final k in layer.keyframes) {
-          if ((k.time.inMilliseconds - _currentTime.inMilliseconds)
-                  .abs() <
-              100) {
-            kf = k;
-            break;
-          }
-        }
-        if (kf == null) {
-          kf = layer.getStateAt(_currentTime).copyWith(time: _currentTime);
-          layer.addKeyframe(kf);
-        }
-
-        final totalDelta = details.focalPoint - _scaleStartFocal;
-        final canvasScale2 = canvasSize.width / _videoSize.width;
-        final vidDelta2 = Offset(
-          totalDelta.dx / (canvasScale2 * _viewScale),
-          totalDelta.dy / (canvasScale2 * _viewScale),
-        );
-        setState(() {
-          kf!.size = Size(
-            (_resizeStartSize!.width + vidDelta2.dx * 2)
-                .clamp(20, _videoSize.width),
-            (_resizeStartSize!.height + vidDelta2.dy * 2)
-                .clamp(20, _videoSize.height),
-          );
-        });
-        break;
-
-      case _GestureMode.none:
-        break;
-    }
-    _lastFocal = details.focalPoint;
-  }
-
-  void _onScaleEnd(ScaleEndDetails details) {
-    _gestureMode = _GestureMode.none;
-    _activeLayerIndex = -1;
-    _resizeStartSize = null;
-  }
-
-  void _onDoubleTap() {
-    _resetScale =
-        Tween(begin: _viewScale, end: 1.0).animate(CurvedAnimation(
-      parent: _resetCtrl,
-      curve: Curves.easeOutCubic,
-    ));
-    _resetOffset =
-        Tween(begin: _viewOffset, end: Offset.zero).animate(CurvedAnimation(
-      parent: _resetCtrl,
-      curve: Curves.easeOutCubic,
-    ));
-    _resetCtrl.forward(from: 0);
-  }
-
-  // --- Build ---
+  // --- ビルド ---
 
   @override
   Widget build(BuildContext context) {
-    final topPad = MediaQuery.of(context).padding.top;
-
     return Scaffold(
-      extendBodyBehindAppBar: true,
+      backgroundColor: AppTheme.bgPrimary,
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : Stack(
-              children: [
-                // Full-screen video canvas
+          ? const _LoadingView()
+          : _loadError != null
+              ? _ErrorView(
+                  error: _loadError!,
+                  onBack: () => Navigator.of(context).pop(),
+                )
+              : _buildEditor(),
+    );
+  }
+
+  Widget _buildEditor() {
+    return SafeArea(
+      top: true,
+      bottom: false,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+            child: TopToolbar(
+              title: '動画エディタ',
+              onBack: _handleBack,
+              onAddLayer: _addLayer,
+              onSave: _saveVideo,
+              isSaving: _saving,
+              layerCount: _project.layers.length,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Expanded(child: _buildCanvas()),
+          CompactPlaybackBar(
+            isPlaying: _playing,
+            currentTime: _currentTime,
+            totalDuration: _totalDuration,
+            onTogglePlay: _togglePlayPause,
+            onSeek: _seekTo,
+          ),
+          EditorBottomSheet(
+            selectedLayer: _project.selectedLayer,
+            layers: _project.layers,
+            selectedIndex: _project.selectedLayerIndex,
+            onTypeChanged: _onTypeChanged,
+            onShapeChanged: _onShapeChanged,
+            onIntensityChanged: _onIntensityChanged,
+            onSelectLayer: _selectLayer,
+            onAddLayer: _addLayer,
+            onDeleteLayer: _deleteLayer,
+            onToggleVisibility: _toggleVisibility,
+            onReorderLayers: _reorderLayers,
+            showTimeRange: true,
+            currentTime: _currentTime,
+            totalDuration: _totalDuration,
+            onSetStart: _setLayerStart,
+            onSetEnd: _setLayerEnd,
+            onSeekTo: _seekTo,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCanvas() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final canvasSize =
+            Size(constraints.maxWidth, constraints.maxHeight);
+        final scale = _fitScale(canvasSize);
+        final videoRect = _videoRect(canvasSize);
+        final ctrl = _videoController;
+
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _deselectLayer,
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              if (ctrl != null)
+                Positioned.fromRect(
+                  rect: videoRect,
+                  child: VideoPlayer(ctrl),
+                ),
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: _VideoMosaicEffectPainter(
+                      layers: _project.layers,
+                      currentTime: _currentTime,
+                      mediaSize: _videoSize,
+                    ),
+                    size: canvasSize,
+                    child: const SizedBox.expand(),
+                  ),
+                ),
+              ),
+              if (!_saving)
+                for (int i = 0; i < _project.layers.length; i++)
+                  if (_project.layers[i].visible &&
+                      _project.layers[i].keyframes.isNotEmpty &&
+                      _project.layers[i].isActiveAt(_currentTime))
+                    MosaicOverlay(
+                      key: ValueKey(
+                          'overlay_${_project.layers[i].id}'),
+                      layer: _project.layers[i],
+                      canvasRect: _layerCanvasRect(
+                          _project.layers[i], videoRect, scale),
+                      isSelected: i == _project.selectedLayerIndex,
+                      onTap: () => _selectLayer(i),
+                      onMove: (delta) => _moveLayer(i, delta, scale),
+                      onResize: (delta, corner) =>
+                          _resizeLayer(i, delta, corner, scale),
+                    ),
+              if (_saving)
                 Positioned.fill(
                   child: Container(
-                    color: AppTheme.bgPrimary,
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final canvasSize = Size(
-                          constraints.maxWidth,
-                          constraints.maxHeight,
-                        );
-                        return GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onScaleStart: (d) =>
-                              _onScaleStart(d, canvasSize),
-                          onScaleUpdate: (d) =>
-                              _onScaleUpdate(d, canvasSize),
-                          onScaleEnd: _onScaleEnd,
-                          onDoubleTap: _onDoubleTap,
-                          child: Center(
-                            child: Transform(
-                              transform: Matrix4.identity()
-                                ..translateByDouble(
-                                    _viewOffset.dx, _viewOffset.dy, 0, 0)
-                                ..scaleByDouble(
-                                    _viewScale, _viewScale, 1, 0),
-                              alignment: Alignment.center,
-                              child: AspectRatio(
-                                aspectRatio:
-                                    _videoSize.width / _videoSize.height,
-                                child: Stack(
-                                  children: [
-                                    VideoPlayer(_videoController),
-                                    CustomPaint(
-                                      size: canvasSize,
-                                      painter:
-                                          _VideoMosaicOverlayPainter(
-                                        layers: _project.layers,
-                                        currentTime: _currentTime,
-                                        mediaSize: _videoSize,
-                                        selectedLayerIndex:
-                                            _project.selectedLayerIndex,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                    color: Colors.black.withValues(alpha: 0.7),
+                    child: Center(
+                      child: SizedBox(
+                        width: 240,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('動画を書き出し中',
+                                style: AppTheme.textHeader),
+                            const SizedBox(height: 6),
+                            Text(
+                              '${(_saveProgress * 100).toStringAsFixed(0)}%',
+                              style: AppTheme.textBody.copyWith(
+                                color: AppTheme.accentBright,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 22,
                               ),
                             ),
-                          ),
-                        );
-                      },
+                            const SizedBox(height: 12),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(3),
+                              child: LinearProgressIndicator(
+                                value: _saveProgress > 0
+                                    ? _saveProgress
+                                    : null,
+                                backgroundColor: AppTheme.bgHover,
+                                color: AppTheme.accent,
+                                minHeight: 6,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              'モザイクを焼き込んだ動画を\n生成しています',
+                              style: AppTheme.textCaption,
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
-
-                // Top toolbar
-                Positioned(
-                  top: topPad + 6,
-                  left: 12,
-                  right: 12,
-                  child: TopToolbar(
-                    title: '動画エディタ',
-                    onBack: () => Navigator.of(context).pop(),
-                    onAddLayer: _addLayer,
-                  ),
-                ),
-
-                // Bottom sheet
-                VideoEditorBottomSheet(
-                  isPlaying: _playing,
-                  currentTime: _currentTime,
-                  totalDuration: _totalDuration,
-                  onTogglePlay: _togglePlayPause,
-                  onSeek: _seekTo,
-                  onAddKeyframe: _addKeyframeToLayer,
-                  onSelectKeyframe: _selectKeyframe,
-                  onDeleteKeyframe: _deleteKeyframe,
-                  selectedLayer: _project.selectedLayer,
-                  onTypeChanged: _onTypeChanged,
-                  onShapeChanged: _onShapeChanged,
-                  onIntensityChanged: _onIntensityChanged,
-                  layers: _project.layers,
-                  selectedIndex: _project.selectedLayerIndex,
-                  onSelectLayer: _selectLayer,
-                  onAddLayer: _addLayer,
-                  onDeleteLayer: _deleteLayer,
-                  onToggleVisibility: _toggleVisibility,
-                  onReorderLayers: _reorderLayers,
-                ),
-              ],
-            ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
 
-enum _GestureMode {
-  none,
-  viewportPan,
-  viewportZoom,
-  moveObject,
-  resizeObject,
-}
-
-/// Overlay painter for video mode
-class _VideoMosaicOverlayPainter extends CustomPainter {
+/// 動画上にモザイク効果のみを描画するペインター
+/// 動画自体は VideoPlayer が表示するため、ここでは描画しない
+class _VideoMosaicEffectPainter extends CustomPainter {
   final List<MosaicLayer> layers;
   final Duration currentTime;
   final Size mediaSize;
-  final int? selectedLayerIndex;
 
-  _VideoMosaicOverlayPainter({
+  _VideoMosaicEffectPainter({
     required this.layers,
     required this.currentTime,
     required this.mediaSize,
-    this.selectedLayerIndex,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final scaleX = size.width / mediaSize.width;
-    final scaleY = size.height / mediaSize.height;
+    if (mediaSize.isEmpty) return;
+
+    final scale = _fitScale(size);
+    final imgW = mediaSize.width * scale;
+    final imgH = mediaSize.height * scale;
+    final left = (size.width - imgW) / 2;
+    final top = (size.height - imgH) / 2;
+    final dst = Rect.fromLTWH(left, top, imgW, imgH);
+
+    canvas.save();
+    canvas.clipRect(dst);
 
     for (int i = 0; i < layers.length; i++) {
       final layer = layers[i];
       if (!layer.visible || layer.keyframes.isEmpty) continue;
-
+      if (!layer.isActiveAt(currentTime)) continue; // 時間範囲外は非表示
       final state = layer.getStateAt(currentTime);
-      _drawMosaicOverlay(
-          canvas, size, layer, state, scaleX, scaleY, i == selectedLayerIndex);
+      _drawMosaicRegion(canvas, dst, scale, layer, state);
     }
+
+    canvas.restore();
   }
 
-  void _drawMosaicOverlay(
+  void _drawMosaicRegion(
     Canvas canvas,
-    Size canvasSize,
+    Rect videoDst,
+    double scale,
     MosaicLayer layer,
     Keyframe state,
-    double scaleX,
-    double scaleY,
-    bool isSelected,
   ) {
-    final cx = state.position.dx * scaleX;
-    final cy = state.position.dy * scaleY;
-    final w = state.size.width * scaleX;
-    final h = state.size.height * scaleY;
+    final cx = videoDst.left + state.position.dx * scale;
+    final cy = videoDst.top + state.position.dy * scale;
+    final w = state.size.width * scale;
+    final h = state.size.height * scale;
     final rect = Rect.fromCenter(center: Offset(cx, cy), width: w, height: h);
 
     canvas.save();
@@ -555,39 +729,40 @@ class _VideoMosaicOverlayPainter extends CustomPainter {
     if (layer.shape == MosaicShape.ellipse) {
       path.addOval(rect);
     } else {
-      path.addRRect(
-          RRect.fromRectAndRadius(rect, const Radius.circular(4)));
+      path.addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)));
     }
     canvas.clipPath(path);
 
     switch (layer.type) {
       case MosaicType.pixelate:
-        final blockSize =
-            (state.intensity * scaleX * 0.5).clamp(2.0, 100.0);
+        final blockSize = max(2.0, state.intensity * scale * 0.5);
         final paint = Paint();
         for (double y = rect.top; y < rect.bottom; y += blockSize) {
           for (double x = rect.left; x < rect.right; x += blockSize) {
-            final bw = (rect.right - x).clamp(0.0, blockSize);
-            final bh = (rect.bottom - y).clamp(0.0, blockSize);
+            final bw = min(blockSize, rect.right - x);
+            final bh = min(blockSize, rect.bottom - y);
             final hash =
                 (x ~/ blockSize * 17 + y ~/ blockSize * 31) % 255;
-            paint.color =
-                Color.fromARGB(180, hash ~/ 2, hash ~/ 2, hash ~/ 2);
+            paint.color = Color.fromARGB(
+                200, hash ~/ 2, hash ~/ 2, hash ~/ 2);
             canvas.drawRect(Rect.fromLTWH(x, y, bw, bh), paint);
           }
         }
         break;
       case MosaicType.blur:
-        canvas.saveLayer(
-            rect,
-            Paint()
-              ..imageFilter = ui.ImageFilter.blur(
-                sigmaX: state.intensity * 0.8,
-                sigmaY: state.intensity * 0.8,
-              ));
+        // 動画フレームにアクセスできないため、半透明の塗り+マスクブラーで擬似表現
+        final sigma = max(1.0, state.intensity * 0.6);
         canvas.drawRect(
-            rect, Paint()..color = Colors.grey.withAlpha(100));
-        canvas.restore();
+          rect,
+          Paint()
+            ..color = Colors.grey.withValues(alpha: 0.55)
+            ..maskFilter = MaskFilter.blur(BlurStyle.normal, sigma),
+        );
+        // より確実な不透明化のためにもう一度塗る
+        canvas.drawRect(
+          rect,
+          Paint()..color = Colors.white.withValues(alpha: 0.15),
+        );
         break;
       case MosaicType.blackout:
         canvas.drawRect(rect, Paint()..color = Colors.black);
@@ -595,88 +770,168 @@ class _VideoMosaicOverlayPainter extends CustomPainter {
     }
 
     canvas.restore();
-
-    // Selection
-    if (isSelected) {
-      _drawSelection(canvas, rect, state, cx, cy);
-    }
   }
 
-  void _drawSelection(
-      Canvas canvas, Rect rect, Keyframe state, double cx, double cy) {
-    canvas.save();
-    canvas.translate(cx, cy);
-    canvas.rotate(state.rotation);
-    canvas.translate(-cx, -cy);
-
-    const accentColor = Color(0xFF6c5ce7);
-    final borderPaint = Paint()
-      ..color = accentColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-
-    final inflated = rect.inflate(2);
-
-    // Dashed border
-    _drawDashedRect(canvas, inflated, borderPaint);
-
-    // Corner handles
-    const handleRadius = 7.0;
-    final handleFill = Paint()..color = Colors.white;
-    final handleStroke = Paint()
-      ..color = accentColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0;
-
-    for (final corner in [
-      inflated.topLeft,
-      inflated.topRight,
-      inflated.bottomLeft,
-      inflated.bottomRight,
-    ]) {
-      canvas.drawCircle(corner, handleRadius, handleFill);
-      canvas.drawCircle(corner, handleRadius, handleStroke);
-    }
-
-    canvas.restore();
-  }
-
-  void _drawDashedRect(Canvas canvas, Rect rect, Paint paint) {
-    const dash = 6.0;
-    const gap = 4.0;
-    const total = dash + gap;
-    _drawDashedLine(canvas, rect.topLeft, rect.topRight, paint, total, dash);
-    _drawDashedLine(
-        canvas, rect.topRight, rect.bottomRight, paint, total, dash);
-    _drawDashedLine(
-        canvas, rect.bottomRight, rect.bottomLeft, paint, total, dash);
-    _drawDashedLine(
-        canvas, rect.bottomLeft, rect.topLeft, paint, total, dash);
-  }
-
-  void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint,
-      double totalDash, double dashLength) {
-    final delta = end - start;
-    final length = delta.distance;
-    if (length == 0) return;
-    final dir = Offset(delta.dx / length, delta.dy / length);
-    double drawn = 0;
-    while (drawn < length) {
-      final segEnd =
-          drawn + dashLength > length ? length : drawn + dashLength;
-      canvas.drawLine(
-        Offset(start.dx + dir.dx * drawn, start.dy + dir.dy * drawn),
-        Offset(start.dx + dir.dx * segEnd, start.dy + dir.dy * segEnd),
-        paint,
-      );
-      drawn += totalDash;
-    }
+  double _fitScale(Size canvasSize) {
+    if (mediaSize.isEmpty) return 1.0;
+    final sx = canvasSize.width / mediaSize.width;
+    final sy = canvasSize.height / mediaSize.height;
+    return sx < sy ? sx : sy;
   }
 
   @override
-  bool shouldRepaint(covariant _VideoMosaicOverlayPainter old) {
-    return old.currentTime != currentTime ||
-        old.layers != layers ||
-        old.selectedLayerIndex != selectedLayerIndex;
+  bool shouldRepaint(covariant _VideoMosaicEffectPainter old) => true;
+}
+
+class _LoadingView extends StatelessWidget {
+  const _LoadingView();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 40,
+            height: 40,
+            child: CircularProgressIndicator(
+              strokeWidth: 3,
+              valueColor: AlwaysStoppedAnimation(AppTheme.accent),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text('動画を読み込んでいます…', style: AppTheme.textBody),
+        ],
+      ),
+    );
+  }
+}
+
+class _ErrorView extends StatelessWidget {
+  final String error;
+  final VoidCallback onBack;
+
+  const _ErrorView({required this.error, required this.onBack});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(AppTheme.spaceXl),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: AppTheme.danger.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.videocam_off_outlined,
+                  size: 36,
+                  color: AppTheme.danger,
+                ),
+              ),
+              const SizedBox(height: AppTheme.spaceLg),
+              Text('動画を読み込めませんでした', style: AppTheme.textTitle),
+              const SizedBox(height: AppTheme.spaceSm),
+              Text(
+                error,
+                style: AppTheme.textBody,
+                textAlign: TextAlign.center,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: AppTheme.spaceXl),
+              FilledButton.icon(
+                onPressed: onBack,
+                icon: const Icon(Icons.arrow_back_rounded, size: 20),
+                label: const Text('戻る'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.accent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 28, vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius:
+                        BorderRadius.circular(AppTheme.radiusMedium),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ConfirmDialog extends StatelessWidget {
+  final String title;
+  final String message;
+  final String confirmLabel;
+  final Color confirmColor;
+
+  const _ConfirmDialog({
+    required this.title,
+    required this.message,
+    required this.confirmLabel,
+    required this.confirmColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.bgElevated,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppTheme.spaceXl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: AppTheme.textHeader),
+            const SizedBox(height: AppTheme.spaceSm),
+            Text(message, style: AppTheme.textBody),
+            const SizedBox(height: AppTheme.spaceXl),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.textSecondary,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
+                  ),
+                  child: const Text('キャンセル'),
+                ),
+                const SizedBox(width: AppTheme.spaceSm),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: confirmColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(AppTheme.radiusSmall),
+                    ),
+                  ),
+                  child: Text(confirmLabel),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

@@ -62,6 +62,14 @@ class MosaicLayer {
   MosaicType type;
   MosaicShape shape;
   bool visible;
+
+  /// レイヤーが表示され始める時刻（動画専用、画像では未使用）
+  Duration startTime;
+
+  /// レイヤーが非表示になる時刻（動画専用、画像では未使用）
+  /// デフォルトは非常に大きな値で事実上無制限
+  Duration endTime;
+
   List<Keyframe> keyframes;
 
   MosaicLayer({
@@ -70,8 +78,15 @@ class MosaicLayer {
     this.type = MosaicType.pixelate,
     this.shape = MosaicShape.rectangle,
     this.visible = true,
+    this.startTime = Duration.zero,
+    this.endTime = const Duration(days: 1),
     List<Keyframe>? keyframes,
   }) : keyframes = keyframes ?? [];
+
+  /// 指定時刻でレイヤーがアクティブ（表示対象）かどうか
+  bool isActiveAt(Duration time) {
+    return time >= startTime && time <= endTime;
+  }
 
   /// Get interpolated keyframe at a given time.
   /// For image mode, returns the first keyframe (or a default).

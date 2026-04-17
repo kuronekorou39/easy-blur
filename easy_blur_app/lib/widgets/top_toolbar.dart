@@ -8,6 +8,7 @@ class TopToolbar extends StatelessWidget {
   final VoidCallback? onAddLayer;
   final bool isSaving;
   final String title;
+  final int layerCount;
 
   const TopToolbar({
     super.key,
@@ -16,6 +17,7 @@ class TopToolbar extends StatelessWidget {
     this.onAddLayer,
     this.isSaving = false,
     this.title = '',
+    this.layerCount = 0,
   });
 
   @override
@@ -23,55 +25,83 @@ class TopToolbar extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(AppTheme.toolbarRadius),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           decoration: BoxDecoration(
             color: AppTheme.surfaceGlass,
             borderRadius: BorderRadius.circular(AppTheme.toolbarRadius),
-            border: Border.all(color: AppTheme.borderColor.withValues(alpha:0.6)),
+            border: Border.all(
+                color: AppTheme.borderColor.withValues(alpha: 0.8)),
+            boxShadow: AppTheme.shadowMd,
           ),
           child: Row(
             children: [
               _ToolbarBtn(
                 icon: Icons.arrow_back_rounded,
+                tooltip: '戻る',
                 onTap: onBack,
               ),
               const SizedBox(width: 4),
               Expanded(
-                child: Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                    if (layerCount > 0) ...[
+                      const SizedBox(height: 1),
+                      Text(
+                        '$layerCount レイヤー',
+                        style: AppTheme.textCaption.copyWith(fontSize: 10),
+                      ),
+                    ],
+                  ],
                 ),
               ),
               const SizedBox(width: 4),
               if (onAddLayer != null)
                 _ToolbarBtn(
                   icon: Icons.add_rounded,
+                  tooltip: 'レイヤーを追加',
                   onTap: onAddLayer!,
                 ),
-              if (onSave != null)
+              if (onSave != null) ...[
+                const SizedBox(width: 4),
                 isSaving
-                    ? const Padding(
-                        padding: EdgeInsets.all(10),
-                        child: SizedBox(
+                    ? Container(
+                        width: 44,
+                        height: 44,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: AppTheme.accent.withValues(alpha: 0.15),
+                          borderRadius:
+                              BorderRadius.circular(AppTheme.radiusMedium),
+                        ),
+                        child: const SizedBox(
                           width: 20,
                           height: 20,
                           child: CircularProgressIndicator(
-                            strokeWidth: 2,
+                            strokeWidth: 2.2,
                             color: AppTheme.accent,
                           ),
                         ),
                       )
                     : _ToolbarBtn(
-                        icon: Icons.save_rounded,
+                        icon: Icons.download_rounded,
+                        tooltip: '保存',
                         onTap: onSave!,
+                        highlighted: true,
                       ),
+              ],
             ],
           ),
         ),
@@ -83,8 +113,15 @@ class TopToolbar extends StatelessWidget {
 class _ToolbarBtn extends StatefulWidget {
   final IconData icon;
   final VoidCallback onTap;
+  final String? tooltip;
+  final bool highlighted;
 
-  const _ToolbarBtn({required this.icon, required this.onTap});
+  const _ToolbarBtn({
+    required this.icon,
+    required this.onTap,
+    this.tooltip,
+    this.highlighted = false,
+  });
 
   @override
   State<_ToolbarBtn> createState() => _ToolbarBtnState();
@@ -100,9 +137,9 @@ class _ToolbarBtnState extends State<_ToolbarBtn>
     super.initState();
     _ctrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 100),
+      duration: const Duration(milliseconds: 120),
     );
-    _scale = Tween(begin: 1.0, end: 0.85).animate(
+    _scale = Tween(begin: 1.0, end: 0.9).animate(
       CurvedAnimation(parent: _ctrl, curve: Curves.easeOut),
     );
   }
@@ -115,7 +152,7 @@ class _ToolbarBtnState extends State<_ToolbarBtn>
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    final btn = GestureDetector(
       onTapDown: (_) => _ctrl.forward(),
       onTapUp: (_) {
         _ctrl.reverse();
@@ -125,15 +162,29 @@ class _ToolbarBtnState extends State<_ToolbarBtn>
       child: ScaleTransition(
         scale: _scale,
         child: Container(
-          width: 40,
-          height: 40,
+          width: 44,
+          height: 44,
           decoration: BoxDecoration(
-            color: AppTheme.bgHover.withValues(alpha:0.5),
-            borderRadius: BorderRadius.circular(10),
+            color: widget.highlighted
+                ? AppTheme.accent
+                : AppTheme.bgHover.withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+            boxShadow: widget.highlighted ? AppTheme.shadowGlow : null,
           ),
-          child: Icon(widget.icon, size: 20, color: AppTheme.textPrimary),
+          child: Icon(
+            widget.icon,
+            size: 21,
+            color: widget.highlighted
+                ? Colors.white
+                : AppTheme.textPrimary,
+          ),
         ),
       ),
     );
+
+    if (widget.tooltip != null) {
+      return Tooltip(message: widget.tooltip!, child: btn);
+    }
+    return btn;
   }
 }

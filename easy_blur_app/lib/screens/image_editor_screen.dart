@@ -1,12 +1,13 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:gal/gal.dart';
 import 'package:path/path.dart' as p;
 import '../models/models.dart';
 import '../painters/mosaic_painter.dart';
 import '../utils/theme.dart';
 import '../widgets/editor_bottom_sheet.dart';
+import '../widgets/mosaic_overlay.dart';
 import '../widgets/top_toolbar.dart';
 
 class ImageEditorScreen extends StatefulWidget {
@@ -18,70 +19,66 @@ class ImageEditorScreen extends StatefulWidget {
   State<ImageEditorScreen> createState() => _ImageEditorScreenState();
 }
 
-class _ImageEditorScreenState extends State<ImageEditorScreen>
-    with TickerProviderStateMixin {
+class _ImageEditorScreenState extends State<ImageEditorScreen> {
   late EditorProject _project;
   ui.Image? _uiImage;
   Size _imageSize = Size.zero;
   bool _loading = true;
   bool _saving = false;
+  String? _loadError;
   final GlobalKey _canvasKey = GlobalKey();
-
-  // Viewport state
-  Offset _viewOffset = Offset.zero;
-  double _viewScale = 1.0;
-  Offset _scaleStartFocal = Offset.zero;
-  double _scaleStartScale = 1.0;
-  Offset _scaleStartOffset = Offset.zero;
-
-  // Gesture state
-  _GestureMode _gestureMode = _GestureMode.none;
-  Offset _lastFocal = Offset.zero;
-  Size? _resizeStartSize;
-  int _activeLayerIndex = -1;
-
-  // Double-tap reset animation
-  late final AnimationController _resetCtrl;
-  late Animation<double> _resetScale;
-  late Animation<Offset> _resetOffset;
 
   @override
   void initState() {
     super.initState();
     _project = widget.project;
-    _resetCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 300));
-    _resetCtrl.addListener(() {
-      setState(() {
-        _viewScale = _resetScale.value;
-        _viewOffset = _resetOffset.value;
-      });
-    });
     _loadImage();
   }
 
   @override
   void dispose() {
-    _resetCtrl.dispose();
+    _uiImage?.dispose();
     super.dispose();
   }
 
   Future<void> _loadImage() async {
-    final file = File(_project.mediaPath);
-    final bytes = await file.readAsBytes();
-    final codec = await ui.instantiateImageCodec(bytes);
-    final frame = await codec.getNextFrame();
-    setState(() {
-      _uiImage = frame.image;
-      _imageSize = Size(
-        frame.image.width.toDouble(),
-        frame.image.height.toDouble(),
-      );
-      _loading = false;
-    });
+    try {
+      final file = File(_project.mediaPath);
+      if (!await file.exists()) {
+        throw Exception('ファイルが見つかりません: ${_project.mediaPath}');
+      }
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        throw Exception('ファイルが空です');
+      }
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      codec.dispose();
+
+      if (!mounted) {
+        frame.image.dispose();
+        return;
+      }
+
+      setState(() {
+        _uiImage = frame.image;
+        _imageSize = Size(
+          frame.image.width.toDouble(),
+          frame.image.height.toDouble(),
+        );
+        _loading = false;
+        _loadError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadError = e.toString();
+      });
+    }
   }
 
-  // --- Layer management ---
+  // --- レイヤー管理 ---
 
   void _addLayer() {
     setState(() {
@@ -89,18 +86,36 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
       layer.addKeyframe(Keyframe(
         time: Duration.zero,
         position: Offset(_imageSize.width / 2, _imageSize.height / 2),
-        size: Size(_imageSize.width * 0.25, _imageSize.height * 0.2),
+        size: Size(_imageSize.width * 0.35, _imageSize.height * 0.22),
         intensity: 20,
       ));
     });
   }
 
-  void _deleteLayer(int index) {
-    setState(() => _project.removeLayer(index));
+  Future<void> _deleteLayer(int index) async {
+    final layer = _project.layers[index];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => _ConfirmDialog(
+        title: 'レイヤーを削除',
+        message: '"${layer.name}" を削除します。\nこの操作は元に戻せません。',
+        confirmLabel: '削除',
+        confirmColor: AppTheme.danger,
+      ),
+    );
+    if (confirmed == true && mounted) {
+      setState(() => _project.removeLayer(index));
+    }
   }
 
   void _selectLayer(int index) {
     setState(() => _project.selectedLayerIndex = index);
+  }
+
+  void _deselectLayer() {
+    if (_project.selectedLayerIndex >= 0) {
+      setState(() => _project.selectedLayerIndex = -1);
+    }
   }
 
   void _toggleVisibility(int index) {
@@ -134,170 +149,110 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
     setState(() => layer.keyframes.first.intensity = value);
   }
 
-  // --- Coordinate conversion ---
+  // --- 座標変換 ---
 
-  Offset _screenToImage(Offset screenPos, Size canvasSize) {
-    // Reverse viewport transform, then map to image coords
-    final center = Offset(canvasSize.width / 2, canvasSize.height / 2);
-    final adjusted = (screenPos - center - _viewOffset) / _viewScale + center;
-    return Offset(
-      adjusted.dx / canvasSize.width * _imageSize.width,
-      adjusted.dy / canvasSize.height * _imageSize.height,
-    );
+  double _fitScale(Size canvasSize) {
+    if (_imageSize.isEmpty) return 1.0;
+    final sx = canvasSize.width / _imageSize.width;
+    final sy = canvasSize.height / _imageSize.height;
+    return sx < sy ? sx : sy;
   }
 
-  int _hitTestLayers(Offset imgPos) {
-    for (int i = _project.layers.length - 1; i >= 0; i--) {
-      final layer = _project.layers[i];
-      if (!layer.visible || layer.keyframes.isEmpty) continue;
-      final kf = layer.keyframes.first;
-      final dx = (imgPos.dx - kf.position.dx).abs();
-      final dy = (imgPos.dy - kf.position.dy).abs();
-      if (dx < kf.size.width / 2 + 20 && dy < kf.size.height / 2 + 20) {
-        return i;
-      }
-    }
-    return -1;
+  /// キャンバス座標系での画像描画矩形
+  Rect _imageRect(Size canvasSize) {
+    final scale = _fitScale(canvasSize);
+    final imgW = _imageSize.width * scale;
+    final imgH = _imageSize.height * scale;
+    final left = (canvasSize.width - imgW) / 2;
+    final top = (canvasSize.height - imgH) / 2;
+    return Rect.fromLTWH(left, top, imgW, imgH);
   }
 
-  bool _isNearCorner(Offset imgPos, Keyframe kf) {
-    final corners = [
-      Offset(kf.position.dx + kf.size.width / 2,
-          kf.position.dy + kf.size.height / 2),
-      Offset(kf.position.dx - kf.size.width / 2,
-          kf.position.dy - kf.size.height / 2),
-      Offset(kf.position.dx + kf.size.width / 2,
-          kf.position.dy - kf.size.height / 2),
-      Offset(kf.position.dx - kf.size.width / 2,
-          kf.position.dy + kf.size.height / 2),
-    ];
-    final threshold = _imageSize.shortestSide * 0.06;
-    return corners.any((c) => (imgPos - c).distance < threshold);
+  /// 画像座標のレイヤー矩形をキャンバス座標に変換
+  Rect _layerCanvasRect(MosaicLayer layer, Rect imageRect, double scale) {
+    if (layer.keyframes.isEmpty) return Rect.zero;
+    final kf = layer.keyframes.first;
+    final cx = imageRect.left + kf.position.dx * scale;
+    final cy = imageRect.top + kf.position.dy * scale;
+    final w = kf.size.width * scale;
+    final h = kf.size.height * scale;
+    return Rect.fromCenter(center: Offset(cx, cy), width: w, height: h);
   }
 
-  // --- Gesture handlers ---
+  // --- レイヤー操作（オーバーレイから呼ばれる）---
 
-  void _onScaleStart(ScaleStartDetails details, Size canvasSize) {
-    _scaleStartFocal = details.focalPoint;
-    _scaleStartScale = _viewScale;
-    _scaleStartOffset = _viewOffset;
-    _lastFocal = details.focalPoint;
-
-    if (details.pointerCount >= 2) {
-      _gestureMode = _GestureMode.viewportZoom;
-      return;
-    }
-
-    // Single finger: try to hit a layer
-    final localPos = details.localFocalPoint;
-    final imgPos = _screenToImage(localPos, canvasSize);
-    final hitIndex = _hitTestLayers(imgPos);
-
-    if (hitIndex >= 0) {
-      _activeLayerIndex = hitIndex;
-      setState(() => _project.selectedLayerIndex = hitIndex);
-      final kf = _project.layers[hitIndex].keyframes.first;
-
-      if (_isNearCorner(imgPos, kf)) {
-        _gestureMode = _GestureMode.resizeObject;
-        _resizeStartSize = kf.size;
-      } else {
-        _gestureMode = _GestureMode.moveObject;
-      }
-    } else {
-      _gestureMode = _GestureMode.viewportPan;
-    }
+  void _moveLayer(int index, Offset canvasDelta, double scale) {
+    if (index < 0 || index >= _project.layers.length) return;
+    final layer = _project.layers[index];
+    if (layer.keyframes.isEmpty) return;
+    final kf = layer.keyframes.first;
+    setState(() {
+      kf.position = Offset(
+        (kf.position.dx + canvasDelta.dx / scale)
+            .clamp(0, _imageSize.width),
+        (kf.position.dy + canvasDelta.dy / scale)
+            .clamp(0, _imageSize.height),
+      );
+    });
   }
 
-  void _onScaleUpdate(ScaleUpdateDetails details, Size canvasSize) {
-    switch (_gestureMode) {
-      case _GestureMode.viewportZoom:
-        setState(() {
-          _viewScale = (_scaleStartScale * details.scale).clamp(0.5, 5.0);
-          _viewOffset = _scaleStartOffset +
-              (details.focalPoint - _scaleStartFocal);
-        });
-        break;
+  void _resizeLayer(int index, Offset canvasDelta, HandleCorner corner,
+      double scale) {
+    if (index < 0 || index >= _project.layers.length) return;
+    final layer = _project.layers[index];
+    if (layer.keyframes.isEmpty) return;
+    final kf = layer.keyframes.first;
 
-      case _GestureMode.viewportPan:
-        setState(() {
-          _viewOffset += details.focalPoint - _lastFocal;
-        });
-        break;
+    // 画像座標系でのデルタ
+    final imgDx = canvasDelta.dx / scale;
+    final imgDy = canvasDelta.dy / scale;
 
-      case _GestureMode.moveObject:
-        final layer = _project.layers[_activeLayerIndex];
-        if (layer.keyframes.isEmpty) break;
-        final kf = layer.keyframes.first;
-        // Relative movement: delta in image coordinates
-        final delta = details.focalPoint - _lastFocal;
-        final canvasScale =
-            canvasSize.width / _imageSize.width;
-        final imgDelta = Offset(
-          delta.dx / (canvasScale * _viewScale),
-          delta.dy / (canvasScale * _viewScale),
-        );
-        setState(() {
-          kf.position = Offset(
-            kf.position.dx + imgDelta.dx,
-            kf.position.dy + imgDelta.dy,
-          );
-        });
+    // 各コーナーの挙動（反対側の角が固定）
+    double widthSign = 0, heightSign = 0;
+    switch (corner) {
+      case HandleCorner.topLeft:
+        widthSign = -1;
+        heightSign = -1;
         break;
-
-      case _GestureMode.resizeObject:
-        final layer = _project.layers[_activeLayerIndex];
-        if (layer.keyframes.isEmpty || _resizeStartSize == null) break;
-        final kf = layer.keyframes.first;
-        final totalDelta = details.focalPoint - _scaleStartFocal;
-        final canvasScale = canvasSize.width / _imageSize.width;
-        final imgDelta = Offset(
-          totalDelta.dx / (canvasScale * _viewScale),
-          totalDelta.dy / (canvasScale * _viewScale),
-        );
-        setState(() {
-          kf.size = Size(
-            (_resizeStartSize!.width + imgDelta.dx * 2)
-                .clamp(20, _imageSize.width),
-            (_resizeStartSize!.height + imgDelta.dy * 2)
-                .clamp(20, _imageSize.height),
-          );
-        });
+      case HandleCorner.topRight:
+        widthSign = 1;
+        heightSign = -1;
         break;
-
-      case _GestureMode.none:
+      case HandleCorner.bottomLeft:
+        widthSign = -1;
+        heightSign = 1;
+        break;
+      case HandleCorner.bottomRight:
+        widthSign = 1;
+        heightSign = 1;
         break;
     }
-    _lastFocal = details.focalPoint;
+
+    setState(() {
+      final newW = (kf.size.width + imgDx * widthSign)
+          .clamp(20.0, _imageSize.width);
+      final newH = (kf.size.height + imgDy * heightSign)
+          .clamp(20.0, _imageSize.height);
+      // 実際のサイズ変化量（clamp 後）
+      final actualDw = newW - kf.size.width;
+      final actualDh = newH - kf.size.height;
+      kf.size = Size(newW, newH);
+      // 中心は固定側の反対方向に半分ずつ移動
+      kf.position = Offset(
+        kf.position.dx + (actualDw * widthSign) / 2,
+        kf.position.dy + (actualDh * heightSign) / 2,
+      );
+    });
   }
 
-  void _onScaleEnd(ScaleEndDetails details) {
-    _gestureMode = _GestureMode.none;
-    _activeLayerIndex = -1;
-    _resizeStartSize = null;
-  }
-
-  void _onDoubleTap() {
-    _resetScale =
-        Tween(begin: _viewScale, end: 1.0).animate(CurvedAnimation(
-      parent: _resetCtrl,
-      curve: Curves.easeOutCubic,
-    ));
-    _resetOffset =
-        Tween(begin: _viewOffset, end: Offset.zero).animate(CurvedAnimation(
-      parent: _resetCtrl,
-      curve: Curves.easeOutCubic,
-    ));
-    _resetCtrl.forward(from: 0);
-  }
-
-  // --- Save ---
+  // --- 保存 ---
 
   Future<void> _saveImage() async {
     if (_uiImage == null) return;
     setState(() => _saving = true);
 
     try {
+      // 1. 描画→PNGエンコード
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
       final painter = MosaicPainter(
@@ -306,6 +261,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
         currentTime: Duration.zero,
         mediaSize: _imageSize,
         selectedLayerIndex: null,
+        isPreview: false,
       );
       painter.paint(canvas, _imageSize);
 
@@ -314,40 +270,56 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
         _imageSize.width.round(),
         _imageSize.height.round(),
       );
-      final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
-      if (byteData == null) throw Exception('Failed to encode PNG');
+      picture.dispose();
+      final byteData =
+          await img.toByteData(format: ui.ImageByteFormat.png);
+      img.dispose();
+      if (byteData == null) throw Exception('PNGエンコード失敗');
 
-      final dir = await getApplicationDocumentsDirectory();
+      // 2. ギャラリーへの書き込み権限を確認
+      final hasAccess = await Gal.hasAccess(toAlbum: true);
+      if (!hasAccess) {
+        final granted = await Gal.requestAccess(toAlbum: true);
+        if (!granted) {
+          throw Exception('ギャラリーへのアクセスが許可されていません');
+        }
+      }
+
+      // 3. ギャラリーへ保存（Android: 写真アプリ / iOS: 写真Appの"Easy Blur"アルバム）
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final originalName =
-          p.basenameWithoutExtension(_project.mediaPath);
-      final outPath =
-          p.join(dir.path, '${originalName}_mosaic_$timestamp.png');
-      final outFile = File(outPath);
-      await outFile.writeAsBytes(byteData.buffer.asUint8List());
+      final originalName = p.basenameWithoutExtension(_project.mediaPath);
+      final filename = '${originalName}_mosaic_$timestamp';
+
+      await Gal.putImageBytes(
+        byteData.buffer.asUint8List(),
+        album: 'Easy Blur',
+        name: filename,
+      );
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('保存完了: ${p.basename(outPath)}'),
-            backgroundColor: AppTheme.accent,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10)),
-            margin: const EdgeInsets.fromLTRB(16, 0, 16, 80),
-          ),
+        _showSnack(
+          icon: Icons.check_circle_rounded,
+          message: '保存しました',
+          detail: '写真アプリの「Easy Blur」アルバム',
+          color: AppTheme.success,
+        );
+      }
+    } on GalException catch (e) {
+      if (mounted) {
+        _showSnack(
+          icon: Icons.error_outline_rounded,
+          message: '保存に失敗しました',
+          detail: e.type.message,
+          color: AppTheme.danger,
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('保存失敗: $e'),
-            backgroundColor: AppTheme.danger,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10)),
-          ),
+        _showSnack(
+          icon: Icons.error_outline_rounded,
+          message: '保存に失敗しました',
+          detail: e.toString(),
+          color: AppTheme.danger,
         );
       }
     } finally {
@@ -355,107 +327,336 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
     }
   }
 
-  // --- Build ---
+  void _showSnack({
+    required IconData icon,
+    required String message,
+    String? detail,
+    required Color color,
+  }) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(icon, color: color, size: 22),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(message,
+                        style: AppTheme.textBodyStrong.copyWith(
+                            color: AppTheme.textPrimary)),
+                    if (detail != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        detail,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.textCaption,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: AppTheme.bgElevated,
+          elevation: 8,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+            side: BorderSide(color: color.withValues(alpha: 0.4)),
+          ),
+          margin: EdgeInsets.fromLTRB(
+            16,
+            0,
+            16,
+            MediaQuery.of(context).size.height * 0.12,
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+  }
+
+  Future<void> _handleBack() async {
+    if (_project.layers.isEmpty) {
+      if (mounted) Navigator.of(context).pop();
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => const _ConfirmDialog(
+        title: '編集を破棄',
+        message: '現在の編集内容は失われます。\nホームに戻りますか？',
+        confirmLabel: '破棄して戻る',
+        confirmColor: AppTheme.danger,
+      ),
+    );
+    if (confirmed == true && mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  // --- ビルド ---
 
   @override
   Widget build(BuildContext context) {
-    final topPad = MediaQuery.of(context).padding.top;
-
     return Scaffold(
-      extendBodyBehindAppBar: true,
+      backgroundColor: AppTheme.bgPrimary,
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : Stack(
-              children: [
-                // Full-screen canvas
-                Positioned.fill(
-                  child: Container(
-                    color: AppTheme.bgPrimary,
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final canvasSize = Size(
-                          constraints.maxWidth,
-                          constraints.maxHeight,
-                        );
-                        return GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onScaleStart: (d) =>
-                              _onScaleStart(d, canvasSize),
-                          onScaleUpdate: (d) =>
-                              _onScaleUpdate(d, canvasSize),
-                          onScaleEnd: _onScaleEnd,
-                          onDoubleTap: _onDoubleTap,
-                          child: Center(
-                            child: Transform(
-                              transform: Matrix4.identity()
-                                ..translateByDouble(
-                                    _viewOffset.dx, _viewOffset.dy, 0, 0)
-                                ..scaleByDouble(_viewScale, _viewScale, 1, 0),
-                              alignment: Alignment.center,
-                              child: AspectRatio(
-                                aspectRatio:
-                                    _imageSize.width / _imageSize.height,
-                                child: RepaintBoundary(
-                                  key: _canvasKey,
-                                  child: CustomPaint(
-                                    size: canvasSize,
-                                    painter: MosaicPainter(
-                                      mediaImage: _uiImage,
-                                      layers: _project.layers,
-                                      currentTime: Duration.zero,
-                                      mediaSize: _imageSize,
-                                      selectedLayerIndex:
-                                          _project.selectedLayerIndex,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
+          ? const _LoadingView()
+          : _loadError != null
+              ? _ErrorView(
+                  error: _loadError!,
+                  onBack: () => Navigator.of(context).pop(),
+                )
+              : _buildEditor(),
+    );
+  }
 
-                // Top toolbar
-                Positioned(
-                  top: topPad + 6,
-                  left: 12,
-                  right: 12,
-                  child: TopToolbar(
-                    title: '画像エディタ',
-                    onBack: () => Navigator.of(context).pop(),
-                    onAddLayer: _addLayer,
-                    onSave: _saveImage,
-                    isSaving: _saving,
-                  ),
-                ),
-
-                // Bottom sheet
-                EditorBottomSheet(
-                  selectedLayer: _project.selectedLayer,
-                  layers: _project.layers,
-                  selectedIndex: _project.selectedLayerIndex,
-                  onTypeChanged: _onTypeChanged,
-                  onShapeChanged: _onShapeChanged,
-                  onIntensityChanged: _onIntensityChanged,
-                  onSelectLayer: _selectLayer,
-                  onAddLayer: _addLayer,
-                  onDeleteLayer: _deleteLayer,
-                  onToggleVisibility: _toggleVisibility,
-                  onReorderLayers: _reorderLayers,
-                ),
-              ],
+  Widget _buildEditor() {
+    return SafeArea(
+      top: true,
+      bottom: false,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+            child: TopToolbar(
+              title: '画像エディタ',
+              onBack: _handleBack,
+              onAddLayer: _addLayer,
+              onSave: _saveImage,
+              isSaving: _saving,
+              layerCount: _project.layers.length,
             ),
+          ),
+          const SizedBox(height: 6),
+          Expanded(child: _buildCanvas()),
+          EditorBottomSheet(
+            selectedLayer: _project.selectedLayer,
+            layers: _project.layers,
+            selectedIndex: _project.selectedLayerIndex,
+            onTypeChanged: _onTypeChanged,
+            onShapeChanged: _onShapeChanged,
+            onIntensityChanged: _onIntensityChanged,
+            onSelectLayer: _selectLayer,
+            onAddLayer: _addLayer,
+            onDeleteLayer: _deleteLayer,
+            onToggleVisibility: _toggleVisibility,
+            onReorderLayers: _reorderLayers,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCanvas() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final canvasSize =
+            Size(constraints.maxWidth, constraints.maxHeight);
+        final scale = _fitScale(canvasSize);
+        final imageRect = _imageRect(canvasSize);
+
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _deselectLayer, // 画像の空白領域タップで選択解除
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              // 画像+モザイク効果
+              Positioned.fill(
+                child: RepaintBoundary(
+                  key: _canvasKey,
+                  child: CustomPaint(
+                    painter: MosaicPainter(
+                      mediaImage: _uiImage,
+                      layers: _project.layers,
+                      currentTime: Duration.zero,
+                      mediaSize: _imageSize,
+                      selectedLayerIndex: null,
+                    ),
+                    size: canvasSize,
+                    child: const SizedBox.expand(),
+                  ),
+                ),
+              ),
+              // 各レイヤーのオーバーレイ（選択枠・ハンドル）
+              for (int i = 0; i < _project.layers.length; i++)
+                if (_project.layers[i].visible &&
+                    _project.layers[i].keyframes.isNotEmpty)
+                  MosaicOverlay(
+                    key: ValueKey('overlay_${_project.layers[i].id}'),
+                    layer: _project.layers[i],
+                    canvasRect: _layerCanvasRect(
+                        _project.layers[i], imageRect, scale),
+                    isSelected: i == _project.selectedLayerIndex,
+                    onTap: () => _selectLayer(i),
+                    onMove: (delta) => _moveLayer(i, delta, scale),
+                    onResize: (delta, corner) =>
+                        _resizeLayer(i, delta, corner, scale),
+                  ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
 
-enum _GestureMode {
-  none,
-  viewportPan,
-  viewportZoom,
-  moveObject,
-  resizeObject,
+class _LoadingView extends StatelessWidget {
+  const _LoadingView();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 40,
+            height: 40,
+            child: CircularProgressIndicator(
+              strokeWidth: 3,
+              valueColor: AlwaysStoppedAnimation(AppTheme.accent),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text('画像を読み込んでいます…', style: AppTheme.textBody),
+        ],
+      ),
+    );
+  }
+}
+
+class _ErrorView extends StatelessWidget {
+  final String error;
+  final VoidCallback onBack;
+
+  const _ErrorView({required this.error, required this.onBack});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(AppTheme.spaceXl),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: AppTheme.danger.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.broken_image_outlined,
+                  size: 36,
+                  color: AppTheme.danger,
+                ),
+              ),
+              const SizedBox(height: AppTheme.spaceLg),
+              Text('画像を読み込めませんでした', style: AppTheme.textTitle),
+              const SizedBox(height: AppTheme.spaceSm),
+              Text(
+                error,
+                style: AppTheme.textBody,
+                textAlign: TextAlign.center,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: AppTheme.spaceXl),
+              FilledButton.icon(
+                onPressed: onBack,
+                icon: const Icon(Icons.arrow_back_rounded, size: 20),
+                label: const Text('戻る'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.accent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 28, vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius:
+                        BorderRadius.circular(AppTheme.radiusMedium),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ConfirmDialog extends StatelessWidget {
+  final String title;
+  final String message;
+  final String confirmLabel;
+  final Color confirmColor;
+
+  const _ConfirmDialog({
+    required this.title,
+    required this.message,
+    required this.confirmLabel,
+    required this.confirmColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.bgElevated,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppTheme.spaceXl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: AppTheme.textHeader),
+            const SizedBox(height: AppTheme.spaceSm),
+            Text(message, style: AppTheme.textBody),
+            const SizedBox(height: AppTheme.spaceXl),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.textSecondary,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
+                  ),
+                  child: const Text('キャンセル'),
+                ),
+                const SizedBox(width: AppTheme.spaceSm),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: confirmColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(AppTheme.radiusSmall),
+                    ),
+                  ),
+                  child: Text(confirmLabel),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

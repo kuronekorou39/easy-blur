@@ -170,6 +170,9 @@ class _VideoEditorBottomSheetState extends State<VideoEditorBottomSheet> {
                       onDelete: widget.onDeleteLayer,
                       onToggleVisibility: widget.onToggleVisibility,
                       onReorder: widget.onReorderLayers,
+                      onTypeChanged: widget.onTypeChanged,
+                      onShapeChanged: widget.onShapeChanged,
+                      onIntensityChanged: widget.onIntensityChanged,
                     ),
                   ),
                   // Bottom safe area
