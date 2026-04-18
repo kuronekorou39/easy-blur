@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
 import 'package:video_player/video_player.dart';
 import '../models/models.dart';
+import '../utils/project_storage.dart';
 import '../utils/theme.dart';
 import '../utils/video_exporter.dart';
 import '../widgets/compact_playback_bar.dart';
@@ -132,10 +133,15 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
 
   @override
   void dispose() {
+    ProjectStorage.flush(_project);
     _positionTimer?.cancel();
     _playLoadingTimeout?.cancel();
     _videoController?.dispose();
     super.dispose();
+  }
+
+  void _scheduleSave() {
+    ProjectStorage.requestSave(_project);
   }
 
   // --- 再生制御 ---
@@ -216,6 +222,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         intensity: 20,
       ));
     });
+    _scheduleSave();
   }
 
   void _setLayerStart(int index) {
@@ -228,6 +235,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         layer.endTime = layer.startTime;
       }
     });
+    _scheduleSave();
   }
 
   void _setLayerEnd(int index) {
@@ -239,6 +247,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         layer.startTime = layer.endTime;
       }
     });
+    _scheduleSave();
   }
 
   /// 現在時刻にキーフレームを追加（既にある場合は何もしない）
@@ -264,6 +273,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         intensity: state.intensity,
       ));
     });
+    _scheduleSave();
   }
 
   /// 指定したキーフレームを削除（ただし最後の1つは削除できない）
@@ -275,6 +285,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     setState(() {
       layer.removeKeyframeAt(keyframeIndex);
     });
+    _scheduleSave();
   }
 
   /// 現在時刻のキーフレームを削除
@@ -289,6 +300,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
               .abs() <=
           toleranceMs) {
         setState(() => layer.removeKeyframeAt(i));
+        _scheduleSave();
         return;
       }
     }
@@ -307,16 +319,19 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     );
     if (confirmed == true && mounted) {
       setState(() => _project.removeLayer(index));
+      _scheduleSave();
     }
   }
 
   void _selectLayer(int index) {
     setState(() => _project.selectedLayerIndex = index);
+    _scheduleSave();
   }
 
   void _deselectLayer() {
     if (_project.selectedLayerIndex >= 0) {
       setState(() => _project.selectedLayerIndex = -1);
+      _scheduleSave();
     }
   }
 
@@ -324,6 +339,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     setState(() {
       _project.layers[index].visible = !_project.layers[index].visible;
     });
+    _scheduleSave();
   }
 
   void _reorderLayers(int oldIndex, int newIndex) {
@@ -331,24 +347,28 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       if (newIndex > oldIndex) newIndex--;
       _project.reorderLayer(oldIndex, newIndex);
     });
+    _scheduleSave();
   }
 
   void _onTypeChanged(MosaicType type) {
     final layer = _project.selectedLayer;
     if (layer == null) return;
     setState(() => layer.type = type);
+    _scheduleSave();
   }
 
   void _onShapeChanged(MosaicShape shape) {
     final layer = _project.selectedLayer;
     if (layer == null) return;
     setState(() => layer.shape = shape);
+    _scheduleSave();
   }
 
   void _onInvertedChanged(bool inverted) {
     final layer = _project.selectedLayer;
     if (layer == null) return;
     setState(() => layer.inverted = inverted);
+    _scheduleSave();
   }
 
   void _onIntensityChanged(double value) {
@@ -368,6 +388,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         ));
       }
     });
+    _scheduleSave();
   }
 
   // --- 座標変換 ---
@@ -433,6 +454,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             .clamp(0, _videoSize.height),
       );
     });
+    _scheduleSave();
   }
 
   void _resizeLayer(
@@ -478,6 +500,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         kf.position.dy + (actualDh * heightSign) / 2,
       );
     });
+    _scheduleSave();
   }
 
   // --- 動画保存（ネイティブ Kotlin + MediaCodec でモザイクを焼き込み）---

@@ -56,6 +56,26 @@ class Keyframe {
       intensity: a.intensity + (b.intensity - a.intensity) * t,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'timeMs': time.inMilliseconds,
+        'posX': position.dx,
+        'posY': position.dy,
+        'sizeW': size.width,
+        'sizeH': size.height,
+        'rotation': rotation,
+        'intensity': intensity,
+      };
+
+  static Keyframe fromJson(Map<String, dynamic> json) => Keyframe(
+        time: Duration(milliseconds: (json['timeMs'] as num).toInt()),
+        position: Offset(
+            (json['posX'] as num).toDouble(), (json['posY'] as num).toDouble()),
+        size: Size(
+            (json['sizeW'] as num).toDouble(), (json['sizeH'] as num).toDouble()),
+        rotation: (json['rotation'] as num?)?.toDouble() ?? 0.0,
+        intensity: (json['intensity'] as num?)?.toDouble() ?? 20.0,
+      );
 }
 
 class MosaicLayer {
@@ -138,4 +158,40 @@ class MosaicLayer {
       keyframes.removeAt(index);
     }
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'type': type.name,
+        'shape': shape.name,
+        'visible': visible,
+        'inverted': inverted,
+        'startTimeMs': startTime.inMilliseconds,
+        'endTimeMs': endTime.inMilliseconds,
+        'keyframes': keyframes.map((k) => k.toJson()).toList(),
+      };
+
+  static MosaicLayer fromJson(Map<String, dynamic> json) => MosaicLayer(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        type: MosaicType.values.firstWhere(
+          (t) => t.name == json['type'],
+          orElse: () => MosaicType.pixelate,
+        ),
+        shape: MosaicShape.values.firstWhere(
+          (s) => s.name == json['shape'],
+          orElse: () => MosaicShape.rectangle,
+        ),
+        visible: json['visible'] as bool? ?? true,
+        inverted: json['inverted'] as bool? ?? false,
+        startTime: Duration(
+            milliseconds: (json['startTimeMs'] as num?)?.toInt() ?? 0),
+        endTime: Duration(
+            milliseconds: (json['endTimeMs'] as num?)?.toInt() ??
+                const Duration(days: 1).inMilliseconds),
+        keyframes: (json['keyframes'] as List<dynamic>?)
+                ?.map((k) => Keyframe.fromJson(k as Map<String, dynamic>))
+                .toList() ??
+            [],
+      );
 }

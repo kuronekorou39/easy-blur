@@ -5,6 +5,7 @@ import 'package:gal/gal.dart';
 import 'package:path/path.dart' as p;
 import '../models/models.dart';
 import '../painters/mosaic_painter.dart';
+import '../utils/project_storage.dart';
 import '../utils/theme.dart';
 import '../widgets/editor_bottom_sheet.dart';
 import '../widgets/floating_action_button_row.dart';
@@ -38,8 +39,15 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
 
   @override
   void dispose() {
+    // 保留中の保存を確定してから破棄
+    ProjectStorage.flush(_project);
     _uiImage?.dispose();
     super.dispose();
+  }
+
+  /// プロジェクトの変更を自動保存（デバウンス付き）
+  void _scheduleSave() {
+    ProjectStorage.requestSave(_project);
   }
 
   Future<void> _loadImage() async {
@@ -91,6 +99,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
         intensity: 20,
       ));
     });
+    _scheduleSave();
   }
 
   Future<void> _deleteLayer(int index) async {
@@ -106,16 +115,19 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
     );
     if (confirmed == true && mounted) {
       setState(() => _project.removeLayer(index));
+      _scheduleSave();
     }
   }
 
   void _selectLayer(int index) {
     setState(() => _project.selectedLayerIndex = index);
+    _scheduleSave();
   }
 
   void _deselectLayer() {
     if (_project.selectedLayerIndex >= 0) {
       setState(() => _project.selectedLayerIndex = -1);
+      _scheduleSave();
     }
   }
 
@@ -123,6 +135,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
     setState(() {
       _project.layers[index].visible = !_project.layers[index].visible;
     });
+    _scheduleSave();
   }
 
   void _reorderLayers(int oldIndex, int newIndex) {
@@ -130,30 +143,35 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
       if (newIndex > oldIndex) newIndex--;
       _project.reorderLayer(oldIndex, newIndex);
     });
+    _scheduleSave();
   }
 
   void _onTypeChanged(MosaicType type) {
     final layer = _project.selectedLayer;
     if (layer == null) return;
     setState(() => layer.type = type);
+    _scheduleSave();
   }
 
   void _onShapeChanged(MosaicShape shape) {
     final layer = _project.selectedLayer;
     if (layer == null) return;
     setState(() => layer.shape = shape);
+    _scheduleSave();
   }
 
   void _onInvertedChanged(bool inverted) {
     final layer = _project.selectedLayer;
     if (layer == null) return;
     setState(() => layer.inverted = inverted);
+    _scheduleSave();
   }
 
   void _onIntensityChanged(double value) {
     final layer = _project.selectedLayer;
     if (layer == null || layer.keyframes.isEmpty) return;
     setState(() => layer.keyframes.first.intensity = value);
+    _scheduleSave();
   }
 
   // --- 座標変換 ---
@@ -201,6 +219,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
             .clamp(0, _imageSize.height),
       );
     });
+    _scheduleSave();
   }
 
   void _resizeLayer(int index, Offset canvasDelta, HandleCorner corner,
@@ -250,6 +269,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
         kf.position.dy + (actualDh * heightSign) / 2,
       );
     });
+    _scheduleSave();
   }
 
   // --- 保存 ---
