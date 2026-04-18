@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:gal/gal.dart';
 import 'package:path/path.dart' as p;
 import '../models/models.dart';
 import '../painters/mosaic_painter.dart';
+import '../utils/project_history.dart';
 import '../utils/project_storage.dart';
 import '../utils/theme.dart';
 import '../widgets/editor_bottom_sheet.dart';
@@ -30,23 +32,50 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
   String? _loadError;
   final GlobalKey _canvasKey = GlobalKey();
 
+  final ProjectHistory _history = ProjectHistory();
+  Timer? _historyPushTimer;
+
   @override
   void initState() {
     super.initState();
     _project = widget.project;
+    _history.push(_project); // 履歴の基点
     _loadImage();
   }
 
   @override
   void dispose() {
-    // 保留中の保存を確定してから破棄
     ProjectStorage.flush(_project);
+    _historyPushTimer?.cancel();
     _uiImage?.dispose();
     super.dispose();
   }
 
-  /// プロジェクトの変更を自動保存（デバウンス付き）
+  /// プロジェクトの変更を自動保存（デバウンス付き）+ 履歴にスナップショット
   void _scheduleSave() {
+    ProjectStorage.requestSave(_project);
+    _historyPushTimer?.cancel();
+    _historyPushTimer = Timer(const Duration(milliseconds: 400), () {
+      _history.push(_project);
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _undo() {
+    if (_historyPushTimer?.isActive == true) {
+      _historyPushTimer?.cancel();
+      _history.push(_project);
+    }
+    final restored = _history.undo();
+    if (restored == null) return;
+    setState(() => _project = restored);
+    ProjectStorage.requestSave(_project);
+  }
+
+  void _redo() {
+    final restored = _history.redo();
+    if (restored == null) return;
+    setState(() => _project = restored);
     ProjectStorage.requestSave(_project);
   }
 
@@ -408,23 +437,9 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
       );
   }
 
-  Future<void> _handleBack() async {
-    if (_project.layers.isEmpty) {
-      if (mounted) Navigator.of(context).pop();
-      return;
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => const _ConfirmDialog(
-        title: '編集を破棄',
-        message: '現在の編集内容は失われます。\nホームに戻りますか？',
-        confirmLabel: '破棄して戻る',
-        confirmColor: AppTheme.danger,
-      ),
-    );
-    if (confirmed == true && mounted) {
-      Navigator.of(context).pop();
-    }
+  void _handleBack() {
+    // 自動保存されているので確認不要、そのまま戻る
+    Navigator.of(context).pop();
   }
 
   // --- ビルド ---
@@ -475,11 +490,15 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
             ),
           ],
         ),
-        // フローティング戻る/保存ボタン
+        // フローティング戻る/保存ボタン + Undo/Redo
         FloatingActionButtonRow(
           onBack: _handleBack,
           onSave: _saveImage,
           isSaving: _saving,
+          onUndo: _undo,
+          onRedo: _redo,
+          canUndo: _history.canUndo,
+          canRedo: _history.canRedo,
         ),
       ],
     );

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
 import 'package:video_player/video_player.dart';
 import '../models/models.dart';
+import '../utils/project_history.dart';
 import '../utils/project_storage.dart';
 import '../utils/theme.dart';
 import '../utils/video_exporter.dart';
@@ -50,10 +51,15 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   Duration _playStartPos = Duration.zero;
   Timer? _playLoadingTimeout;
 
+  // 編集履歴（Undo/Redo）
+  final ProjectHistory _history = ProjectHistory();
+  Timer? _historyPushTimer;
+
   @override
   void initState() {
     super.initState();
     _project = widget.project;
+    _history.push(_project);
     _initVideo();
   }
 
@@ -134,6 +140,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   @override
   void dispose() {
     ProjectStorage.flush(_project);
+    _historyPushTimer?.cancel();
     _positionTimer?.cancel();
     _playLoadingTimeout?.cancel();
     _videoController?.dispose();
@@ -141,6 +148,29 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   }
 
   void _scheduleSave() {
+    ProjectStorage.requestSave(_project);
+    _historyPushTimer?.cancel();
+    _historyPushTimer = Timer(const Duration(milliseconds: 400), () {
+      _history.push(_project);
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _undo() {
+    if (_historyPushTimer?.isActive == true) {
+      _historyPushTimer?.cancel();
+      _history.push(_project);
+    }
+    final restored = _history.undo();
+    if (restored == null) return;
+    setState(() => _project = restored);
+    ProjectStorage.requestSave(_project);
+  }
+
+  void _redo() {
+    final restored = _history.redo();
+    if (restored == null) return;
+    setState(() => _project = restored);
     ProjectStorage.requestSave(_project);
   }
 
@@ -633,23 +663,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       );
   }
 
-  Future<void> _handleBack() async {
-    if (_project.layers.isEmpty) {
-      if (mounted) Navigator.of(context).pop();
-      return;
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => const _ConfirmDialog(
-        title: '編集を破棄',
-        message: '現在の編集内容は失われます。\nホームに戻りますか？',
-        confirmLabel: '破棄して戻る',
-        confirmColor: AppTheme.danger,
-      ),
-    );
-    if (confirmed == true && mounted) {
-      Navigator.of(context).pop();
-    }
+  void _handleBack() {
+    // 自動保存されているので確認なしで戻る
+    Navigator.of(context).pop();
   }
 
   // --- ビルド ---
@@ -743,6 +759,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           onBack: _handleBack,
           onSave: _saveVideo,
           isSaving: _saving,
+          onUndo: _undo,
+          onRedo: _redo,
+          canUndo: _history.canUndo,
+          canRedo: _history.canRedo,
         ),
         // モード切替ボタン（FABの下）
         Positioned(

@@ -9,15 +9,26 @@ class FloatingActionButtonRow extends StatelessWidget {
   final VoidCallback? onSave;
   final bool isSaving;
 
+  /// Undo/Redo コールバック。null なら非表示
+  final VoidCallback? onUndo;
+  final VoidCallback? onRedo;
+  final bool canUndo;
+  final bool canRedo;
+
   const FloatingActionButtonRow({
     super.key,
     required this.onBack,
     this.onSave,
     this.isSaving = false,
+    this.onUndo,
+    this.onRedo,
+    this.canUndo = false,
+    this.canRedo = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final hasHistory = onUndo != null && onRedo != null;
     return SafeArea(
       bottom: false,
       child: Padding(
@@ -29,6 +40,22 @@ class FloatingActionButtonRow extends StatelessWidget {
               tooltip: '戻る',
               onTap: onBack,
             ),
+            if (hasHistory) ...[
+              const SizedBox(width: 8),
+              _CircleButton(
+                icon: Icons.undo_rounded,
+                tooltip: '元に戻す',
+                onTap: canUndo ? onUndo! : null,
+                enabled: canUndo,
+              ),
+              const SizedBox(width: 4),
+              _CircleButton(
+                icon: Icons.redo_rounded,
+                tooltip: 'やり直す',
+                onTap: canRedo ? onRedo! : null,
+                enabled: canRedo,
+              ),
+            ],
             const Spacer(),
             if (onSave != null)
               _CircleButton(
@@ -48,9 +75,10 @@ class FloatingActionButtonRow extends StatelessWidget {
 class _CircleButton extends StatefulWidget {
   final IconData icon;
   final String tooltip;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final bool highlighted;
   final bool loading;
+  final bool enabled;
 
   const _CircleButton({
     required this.icon,
@@ -58,6 +86,7 @@ class _CircleButton extends StatefulWidget {
     required this.onTap,
     this.highlighted = false,
     this.loading = false,
+    this.enabled = true,
   });
 
   @override
@@ -95,59 +124,68 @@ class _CircleButtonState extends State<_CircleButton>
         : Colors.black.withValues(alpha: 0.5);
     final iconColor = Colors.white;
 
+    final disabled = !widget.enabled || widget.onTap == null;
     return Tooltip(
       message: widget.tooltip,
       child: GestureDetector(
-        onTapDown: widget.loading ? null : (_) => _ctrl.forward(),
-        onTapUp: widget.loading
+        onTapDown:
+            widget.loading || disabled ? null : (_) => _ctrl.forward(),
+        onTapUp: widget.loading || disabled
             ? null
             : (_) {
                 _ctrl.reverse();
-                widget.onTap();
+                widget.onTap?.call();
               },
-        onTapCancel: widget.loading ? null : () => _ctrl.reverse(),
+        onTapCancel:
+            widget.loading || disabled ? null : () => _ctrl.reverse(),
         child: ScaleTransition(
           scale: _scale,
           child: ClipOval(
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-              child: Container(
-                width: size,
-                height: size,
-                decoration: BoxDecoration(
-                  color: bg,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: widget.highlighted
-                        ? Colors.white.withValues(alpha: 0.25)
-                        : Colors.white.withValues(alpha: 0.18),
-                    width: 1,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.35),
-                      blurRadius: 12,
-                      offset: const Offset(0, 3),
+              child: Opacity(
+                opacity: disabled ? 0.35 : 1.0,
+                child: Container(
+                  width: size,
+                  height: size,
+                  decoration: BoxDecoration(
+                    color: bg,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: widget.highlighted
+                          ? Colors.white.withValues(alpha: 0.25)
+                          : Colors.white.withValues(alpha: 0.18),
+                      width: 1,
                     ),
-                    if (widget.highlighted)
-                      BoxShadow(
-                        color: AppTheme.accent.withValues(alpha: 0.45),
-                        blurRadius: 16,
-                        spreadRadius: -2,
-                      ),
-                  ],
-                ),
-                child: Center(
-                  child: widget.loading
-                      ? SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: iconColor,
-                          ),
-                        )
-                      : Icon(widget.icon, size: 20, color: iconColor),
+                    boxShadow: disabled
+                        ? null
+                        : [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              blurRadius: 12,
+                              offset: const Offset(0, 3),
+                            ),
+                            if (widget.highlighted)
+                              BoxShadow(
+                                color: AppTheme.accent
+                                    .withValues(alpha: 0.45),
+                                blurRadius: 16,
+                                spreadRadius: -2,
+                              ),
+                          ],
+                  ),
+                  child: Center(
+                    child: widget.loading
+                        ? SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: iconColor,
+                            ),
+                          )
+                        : Icon(widget.icon, size: 20, color: iconColor),
+                  ),
                 ),
               ),
             ),
