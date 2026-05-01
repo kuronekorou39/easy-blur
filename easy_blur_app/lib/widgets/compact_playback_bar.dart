@@ -2,18 +2,19 @@ import 'package:flutter/material.dart';
 import '../utils/theme.dart';
 
 /// 動画再生コントロール（2段構成）
+///
 /// 上段: 時刻 + プログレスバー + 総時間
-/// 下段: ◀◀(1秒) ◀(1フレーム) ▶/⏸ ▶(1フレーム) ▶▶(1秒)
-class CompactPlaybackBar extends StatelessWidget {
+/// 下段: ◀ ⏵/⏸ ▶
+///   - 短タップ: 現在のスキップ間隔だけ移動
+///   - 長押し: 0.5s / 1s / 5s / 10s / 30s からスキップ間隔を選択
+///   - ボタンには現在の間隔（"1s" 等）を表示
+class CompactPlaybackBar extends StatefulWidget {
   final bool isPlaying;
   final bool isLoading;
   final Duration currentTime;
   final Duration totalDuration;
   final VoidCallback onTogglePlay;
   final ValueChanged<Duration> onSeek;
-
-  /// フレームレート (FPS)。デフォルト 30
-  final int frameRate;
 
   const CompactPlaybackBar({
     super.key,
@@ -23,24 +24,105 @@ class CompactPlaybackBar extends StatelessWidget {
     required this.onTogglePlay,
     required this.onSeek,
     this.isLoading = false,
-    this.frameRate = 30,
   });
 
-  int get _frameMs => (1000.0 / frameRate).round();
+  @override
+  State<CompactPlaybackBar> createState() => _CompactPlaybackBarState();
+}
+
+class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
+  /// スキップ間隔（ミリ秒）。左右のボタンで共有
+  int _skipMs = 1000;
+
+  /// 選択肢
+  static const List<int> _skipOptions = [500, 1000, 5000, 10000, 30000];
 
   void _seekBy(int deltaMs) {
-    final newMs =
-        (currentTime.inMilliseconds + deltaMs).clamp(
-            0, totalDuration.inMilliseconds);
-    onSeek(Duration(milliseconds: newMs));
+    final newMs = (widget.currentTime.inMilliseconds + deltaMs)
+        .clamp(0, widget.totalDuration.inMilliseconds);
+    widget.onSeek(Duration(milliseconds: newMs));
+  }
+
+  /// 指定ボタン位置から長押しメニューを開く
+  Future<void> _showSkipMenu(BuildContext buttonContext) async {
+    final renderObject = buttonContext.findRenderObject();
+    if (renderObject is! RenderBox) return;
+    final overlay =
+        Overlay.of(buttonContext).context.findRenderObject() as RenderBox?;
+    if (overlay == null) return;
+
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        renderObject.localToGlobal(Offset.zero, ancestor: overlay),
+        renderObject.localToGlobal(
+            renderObject.size.bottomRight(Offset.zero),
+            ancestor: overlay),
+      ),
+      Offset.zero & overlay.size,
+    );
+
+    final selected = await showMenu<int>(
+      context: buttonContext,
+      position: position,
+      color: AppTheme.bgElevated,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+        side: BorderSide(
+          color: AppTheme.borderLight.withValues(alpha: 0.5),
+        ),
+      ),
+      items: _skipOptions.map((ms) {
+        final isCurrent = ms == _skipMs;
+        return PopupMenuItem<int>(
+          value: ms,
+          child: Row(
+            children: [
+              Icon(
+                isCurrent
+                    ? Icons.check_rounded
+                    : Icons.circle_outlined,
+                size: 16,
+                color: isCurrent
+                    ? AppTheme.accentBright
+                    : AppTheme.textMuted.withValues(alpha: 0.5),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                _formatSkip(ms),
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
+                  color: isCurrent
+                      ? AppTheme.accentBright
+                      : AppTheme.textPrimary,
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+
+    if (selected != null && mounted) {
+      setState(() => _skipMs = selected);
+    }
+  }
+
+  static String _formatSkip(int ms) {
+    if (ms < 1000) {
+      final s = ms / 1000;
+      return '${s.toStringAsFixed(1)}s';
+    }
+    return '${ms ~/ 1000}s';
   }
 
   @override
   Widget build(BuildContext context) {
-    final totalMs = totalDuration.inMilliseconds.toDouble();
+    final totalMs = widget.totalDuration.inMilliseconds.toDouble();
     final progress = totalMs > 0
-        ? (currentTime.inMilliseconds / totalMs).clamp(0.0, 1.0)
+        ? (widget.currentTime.inMilliseconds / totalMs).clamp(0.0, 1.0)
         : 0.0;
+    final label = _formatSkip(_skipMs);
 
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
@@ -48,7 +130,8 @@ class CompactPlaybackBar extends StatelessWidget {
         color: AppTheme.bgSecondary.withValues(alpha: 0.4),
         border: Border(
           top: BorderSide(
-              color: AppTheme.borderColor.withValues(alpha: 0.4), width: 0.5),
+              color: AppTheme.borderColor.withValues(alpha: 0.4),
+              width: 0.5),
         ),
       ),
       child: Column(
@@ -58,7 +141,7 @@ class CompactPlaybackBar extends StatelessWidget {
           Row(
             children: [
               Text(
-                _formatTime(currentTime, showFrames: true),
+                _formatTime(widget.currentTime, showFraction: true),
                 style: const TextStyle(
                   fontSize: 12,
                   color: AppTheme.textPrimary,
@@ -83,7 +166,7 @@ class CompactPlaybackBar extends StatelessWidget {
                   child: Slider(
                     value: progress,
                     onChanged: (v) {
-                      onSeek(Duration(
+                      widget.onSeek(Duration(
                           milliseconds: (v * totalMs).round()));
                     },
                   ),
@@ -91,7 +174,7 @@ class CompactPlaybackBar extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Text(
-                _formatTime(totalDuration),
+                _formatTime(widget.totalDuration),
                 style: const TextStyle(
                   fontSize: 11,
                   color: AppTheme.textMuted,
@@ -100,57 +183,29 @@ class CompactPlaybackBar extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 2),
-          // 下段: 3段階 × 左右のシーク + 再生ボタン
+          const SizedBox(height: 4),
+          // 下段: 戻る / 再生 / 進む
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _SeekButton(
-                icon: Icons.replay_10_rounded,
-                label: '10s',
-                onTap: () => _seekBy(-10000),
-                holdDeltaMs: -10000,
-                onHoldTick: _seekBy,
-              ),
-              _SeekButton(
                 icon: Icons.fast_rewind_rounded,
-                label: '1s',
-                onTap: () => _seekBy(-1000),
-                holdDeltaMs: -1000,
-                onHoldTick: _seekBy,
+                label: label,
+                onTap: () => _seekBy(-_skipMs),
+                onLongPress: _showSkipMenu,
               ),
-              _SeekButton(
-                icon: Icons.skip_previous_rounded,
-                label: '1F',
-                onTap: () => _seekBy(-_frameMs),
-                holdDeltaMs: -_frameMs,
-                onHoldTick: _seekBy,
-              ),
+              const SizedBox(width: 16),
               _PlayPauseButton(
-                isPlaying: isPlaying,
-                isLoading: isLoading,
-                onTap: onTogglePlay,
+                isPlaying: widget.isPlaying,
+                isLoading: widget.isLoading,
+                onTap: widget.onTogglePlay,
               ),
-              _SeekButton(
-                icon: Icons.skip_next_rounded,
-                label: '1F',
-                onTap: () => _seekBy(_frameMs),
-                holdDeltaMs: _frameMs,
-                onHoldTick: _seekBy,
-              ),
+              const SizedBox(width: 16),
               _SeekButton(
                 icon: Icons.fast_forward_rounded,
-                label: '1s',
-                onTap: () => _seekBy(1000),
-                holdDeltaMs: 1000,
-                onHoldTick: _seekBy,
-              ),
-              _SeekButton(
-                icon: Icons.forward_10_rounded,
-                label: '10s',
-                onTap: () => _seekBy(10000),
-                holdDeltaMs: 10000,
-                onHoldTick: _seekBy,
+                label: label,
+                onTap: () => _seekBy(_skipMs),
+                onLongPress: _showSkipMenu,
               ),
             ],
           ),
@@ -159,97 +214,68 @@ class CompactPlaybackBar extends StatelessWidget {
     );
   }
 
-  /// 時刻フォーマット。showFrames=true で m:ss.FF（FFは0.01秒精度）
-  String _formatTime(Duration d, {bool showFrames = false}) {
+  /// 時刻表示。 showFraction=true で 0.1秒精度
+  String _formatTime(Duration d, {bool showFraction = false}) {
     final m = d.inMinutes;
     final s = d.inSeconds % 60;
-    if (!showFrames) {
+    if (!showFraction) {
       return '$m:${s.toString().padLeft(2, '0')}';
     }
-    // 1/100秒精度の端数
-    final ff = ((d.inMilliseconds % 1000) / 10).floor();
-    return '$m:${s.toString().padLeft(2, '0')}.${ff.toString().padLeft(2, '0')}';
+    final f = ((d.inMilliseconds % 1000) / 100).floor();
+    return '$m:${s.toString().padLeft(2, '0')}.$f';
   }
 }
 
-/// シークボタン（タップ / 長押し対応、アイコン+刻み量ラベル）
-class _SeekButton extends StatefulWidget {
+/// シークボタン（短タップで1回送り、長押しでメニュー）
+class _SeekButton extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-  final int holdDeltaMs;
-  final ValueChanged<int> onHoldTick;
+  final void Function(BuildContext) onLongPress;
 
   const _SeekButton({
     required this.icon,
     required this.label,
     required this.onTap,
-    required this.holdDeltaMs,
-    required this.onHoldTick,
+    required this.onLongPress,
   });
 
   @override
-  State<_SeekButton> createState() => _SeekButtonState();
-}
-
-class _SeekButtonState extends State<_SeekButton> {
-  bool _holding = false;
-
-  Future<void> _startHold() async {
-    _holding = true;
-    await Future.delayed(const Duration(milliseconds: 250));
-    while (_holding && mounted) {
-      widget.onHoldTick(widget.holdDeltaMs);
-      await Future.delayed(const Duration(milliseconds: 80));
-    }
-  }
-
-  void _stopHold() {
-    _holding = false;
-  }
-
-  @override
-  void dispose() {
-    _holding = false;
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: widget.onTap,
-      onLongPressStart: (_) => _startHold(),
-      onLongPressEnd: (_) => _stopHold(),
-      onLongPressCancel: _stopHold,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        width: 44,
-        height: 40,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: AppTheme.bgHover.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-          border: Border.all(
-            color: AppTheme.borderColor.withValues(alpha: 0.4),
-            width: 0.5,
-          ),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(widget.icon, size: 15, color: AppTheme.textPrimary),
-            const SizedBox(height: 1),
-            Text(
-              widget.label,
-              style: const TextStyle(
-                fontSize: 9,
-                fontWeight: FontWeight.w700,
-                color: AppTheme.textSecondary,
-                fontFeatures: [FontFeature.tabularFigures()],
-                height: 1.0,
-              ),
+    return Builder(
+      builder: (ctx) => GestureDetector(
+        onTap: onTap,
+        onLongPress: () => onLongPress(ctx),
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          width: 64,
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: AppTheme.bgHover.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+            border: Border.all(
+              color: AppTheme.borderColor.withValues(alpha: 0.4),
+              width: 0.5,
             ),
-          ],
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: AppTheme.textPrimary),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textSecondary,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -294,8 +320,8 @@ class _PlayPauseButton extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
         duration: AppTheme.animFast,
-        width: 44,
-        height: 40,
+        width: 52,
+        height: 44,
         decoration: BoxDecoration(
           color: AppTheme.accent,
           borderRadius: BorderRadius.circular(AppTheme.radiusSmall),

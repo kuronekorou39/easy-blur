@@ -811,6 +811,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: _deselectLayer,
+          onPanUpdate: (d) {
+            // 選択中レイヤーがあれば、矩形外ドラッグでも相対移動できる
+            final idx = _project.selectedLayerIndex;
+            if (idx < 0) return;
+            _moveLayer(idx, d.delta, scale);
+          },
           child: Stack(
             clipBehavior: Clip.hardEdge,
             children: [

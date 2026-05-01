@@ -104,15 +104,6 @@ class _EditorBottomSheetState extends State<EditorBottomSheet>
   }
 
   @override
-  void didUpdateWidget(covariant EditorBottomSheet oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // レイヤーが選択されたら自動展開
-    if (widget.selectedLayer != null && oldWidget.selectedLayer == null) {
-      _expand();
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).padding.bottom;
     final screenH = MediaQuery.of(context).size.height;

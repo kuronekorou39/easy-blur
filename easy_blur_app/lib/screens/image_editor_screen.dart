@@ -515,6 +515,12 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: _deselectLayer, // 画像の空白領域タップで選択解除
+          // 選択中レイヤーがあれば、矩形外ドラッグでも相対移動できる
+          onPanUpdate: (d) {
+            final idx = _project.selectedLayerIndex;
+            if (idx < 0) return;
+            _moveLayer(idx, d.delta, scale);
+          },
           child: Stack(
             clipBehavior: Clip.hardEdge,
             children: [

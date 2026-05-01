@@ -30,7 +30,8 @@ class MosaicOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const handleSize = 22.0;
+    // タッチ領域（見た目は _Handle 内で 14pt の円）。指で掴みやすいよう広めに。
+    const handleSize = 36.0;
     final rect = canvasRect;
 
     return Positioned(
