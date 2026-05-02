@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
 import 'package:video_player/video_player.dart';
@@ -77,12 +78,16 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         return;
       }
 
-      // 回転メタデータを考慮した表示サイズを計算
+      // 表示サイズは aspectRatio から逆算（rotationCorrection の挙動が
+      // 動画ごとに不安定なため、より信頼できる aspectRatio を使う）
       final rawSize = controller.value.size;
       final rotation = controller.value.rotationCorrection;
-      final displaySize = (rotation == 90 || rotation == 270)
-          ? Size(rawSize.height, rawSize.width)
-          : rawSize;
+      final aspect = controller.value.aspectRatio;
+      final maxSide = math.max(rawSize.width, rawSize.height);
+      final minSide = math.min(rawSize.width, rawSize.height);
+      final displaySize = aspect >= 1
+          ? Size(maxSide, minSide) // 横長: 長辺=幅
+          : Size(minSide, maxSide); // 縦長: 長辺=高さ
 
       setState(() {
         _videoController = controller;
@@ -372,6 +377,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _scheduleSave();
   }
 
+  void _toggleLocked(int index) {
+    setState(() {
+      _project.layers[index].locked = !_project.layers[index].locked;
+    });
+    _scheduleSave();
+  }
+
   void _reorderLayers(int oldIndex, int newIndex) {
     setState(() {
       if (newIndex > oldIndex) newIndex--;
@@ -401,6 +413,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _scheduleSave();
   }
 
+  void _onFillColorChanged(int color) {
+    final layer = _project.selectedLayer;
+    if (layer == null) return;
+    setState(() => layer.fillColor = color);
+    _scheduleSave();
+  }
+
   void _onIntensityChanged(double value) {
     final layer = _project.selectedLayer;
     if (layer == null) return;
@@ -416,6 +435,18 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           size: Size(_videoSize.width * 0.35, _videoSize.height * 0.22),
           intensity: value,
         ));
+      }
+    });
+    _scheduleSave();
+  }
+
+  void _onRotationChanged(double radians) {
+    final layer = _project.selectedLayer;
+    if (layer == null) return;
+    // 全キーフレームに適用（動画全体で回転は統一）
+    setState(() {
+      for (final kf in layer.keyframes) {
+        kf.rotation = radians;
       }
     });
     _scheduleSave();
@@ -474,7 +505,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   void _moveLayer(int index, Offset canvasDelta, double scale) {
     if (index < 0 || index >= _project.layers.length) return;
     final layer = _project.layers[index];
-    if (layer.keyframes.isEmpty) return;
+    if (layer.locked || layer.keyframes.isEmpty) return;
     setState(() {
       final kf = _getOrCreateKeyframeAt(layer, _currentTime);
       kf.position = Offset(
@@ -491,7 +522,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       int index, Offset canvasDelta, HandleCorner corner, double scale) {
     if (index < 0 || index >= _project.layers.length) return;
     final layer = _project.layers[index];
-    if (layer.keyframes.isEmpty) return;
+    if (layer.locked || layer.keyframes.isEmpty) return;
 
     final imgDx = canvasDelta.dx / scale;
     final imgDy = canvasDelta.dy / scale;
@@ -705,11 +736,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       onTypeChanged: _onTypeChanged,
       onShapeChanged: _onShapeChanged,
       onInvertedChanged: _onInvertedChanged,
+      onFillColorChanged: _onFillColorChanged,
       onIntensityChanged: _onIntensityChanged,
+      onRotationChanged: _onRotationChanged,
       onSelectLayer: _selectLayer,
       onAddLayer: _addLayer,
       onDeleteLayer: _deleteLayer,
       onToggleVisibility: _toggleVisibility,
+      onToggleLocked: _toggleLocked,
       onReorderLayers: _reorderLayers,
       showTimeRange: true,
       currentTime: _currentTime,
@@ -838,9 +872,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                     type: _project.layers[i].type,
                     shape: _project.layers[i].shape,
                     inverted: _project.layers[i].inverted,
+                    fillColor: _project.layers[i].fillColor,
                     intensity: _project.layers[i]
                         .getStateAt(_currentTime)
                         .intensity,
+                    rotation: _project.layers[i]
+                        .getStateAt(_currentTime)
+                        .rotation,
                   ),
               if (!_saving)
                 for (int i = 0; i < _project.layers.length; i++)

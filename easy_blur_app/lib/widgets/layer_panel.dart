@@ -13,11 +13,14 @@ class LayerPanel extends StatefulWidget {
   final VoidCallback onAdd;
   final ValueChanged<int> onDelete;
   final ValueChanged<int> onToggleVisibility;
+  final ValueChanged<int> onToggleLocked;
   final void Function(int oldIndex, int newIndex) onReorder;
   final ValueChanged<MosaicType> onTypeChanged;
   final ValueChanged<MosaicShape> onShapeChanged;
   final ValueChanged<bool> onInvertedChanged;
+  final ValueChanged<int> onFillColorChanged;
   final ValueChanged<double> onIntensityChanged;
+  final ValueChanged<double> onRotationChanged;
 
   // 動画用: 時間範囲編集
   final bool showTimeRange;
@@ -38,11 +41,14 @@ class LayerPanel extends StatefulWidget {
     required this.onAdd,
     required this.onDelete,
     required this.onToggleVisibility,
+    required this.onToggleLocked,
     required this.onReorder,
     required this.onTypeChanged,
     required this.onShapeChanged,
     required this.onInvertedChanged,
+    required this.onFillColorChanged,
     required this.onIntensityChanged,
+    required this.onRotationChanged,
     this.showTimeRange = false,
     this.currentTime,
     this.totalDuration,
@@ -202,6 +208,7 @@ class _LayerPanelState extends State<LayerPanel> {
             onTap: () => widget.onSelect(index),
             onExpandToggle: () => _toggleExpand(layer.id),
             onToggleVisibility: () => widget.onToggleVisibility(index),
+            onToggleLocked: () => widget.onToggleLocked(index),
             onDelete: () => widget.onDelete(index),
             onTypeChanged: (t) {
               widget.onSelect(index);
@@ -215,9 +222,17 @@ class _LayerPanelState extends State<LayerPanel> {
               widget.onSelect(index);
               widget.onInvertedChanged(v);
             },
+            onFillColorChanged: (c) {
+              widget.onSelect(index);
+              widget.onFillColorChanged(c);
+            },
             onIntensityChanged: (v) {
               widget.onSelect(index);
               widget.onIntensityChanged(v);
+            },
+            onRotationChanged: (v) {
+              widget.onSelect(index);
+              widget.onRotationChanged(v);
             },
             showTimeRange: widget.showTimeRange,
             currentTime: widget.currentTime,
@@ -254,11 +269,14 @@ class _LayerTile extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onExpandToggle;
   final VoidCallback onToggleVisibility;
+  final VoidCallback onToggleLocked;
   final VoidCallback onDelete;
   final ValueChanged<MosaicType> onTypeChanged;
   final ValueChanged<MosaicShape> onShapeChanged;
   final ValueChanged<bool> onInvertedChanged;
+  final ValueChanged<int> onFillColorChanged;
   final ValueChanged<double> onIntensityChanged;
+  final ValueChanged<double> onRotationChanged;
 
   // 動画用
   final bool showTimeRange;
@@ -280,11 +298,14 @@ class _LayerTile extends StatelessWidget {
     required this.onTap,
     required this.onExpandToggle,
     required this.onToggleVisibility,
+    required this.onToggleLocked,
     required this.onDelete,
     required this.onTypeChanged,
     required this.onShapeChanged,
     required this.onInvertedChanged,
+    required this.onFillColorChanged,
     required this.onIntensityChanged,
+    required this.onRotationChanged,
     this.showTimeRange = false,
     this.currentTime,
     this.totalDuration,
@@ -302,10 +323,8 @@ class _LayerTile extends StatelessWidget {
         return Icons.grid_on_rounded;
       case MosaicType.blur:
         return Icons.blur_on_rounded;
-      case MosaicType.blackout:
-        return Icons.block_rounded;
-      case MosaicType.whiteout:
-        return Icons.circle_rounded;
+      case MosaicType.fill:
+        return Icons.format_color_fill_rounded;
       case MosaicType.noise:
         return Icons.grain_rounded;
     }
@@ -317,10 +336,8 @@ class _LayerTile extends StatelessWidget {
         return 'モザイク';
       case MosaicType.blur:
         return 'ぼかし';
-      case MosaicType.blackout:
-        return '黒塗り';
-      case MosaicType.whiteout:
-        return '白塗り';
+      case MosaicType.fill:
+        return 'バケツ';
       case MosaicType.noise:
         return 'ノイズ';
     }
@@ -332,6 +349,10 @@ class _LayerTile extends StatelessWidget {
         return '矩形';
       case MosaicShape.ellipse:
         return '楕円';
+      case MosaicShape.triangle:
+        return '三角';
+      case MosaicShape.heart:
+        return 'ハート';
     }
   }
 
@@ -458,6 +479,17 @@ class _LayerTile extends StatelessWidget {
             ),
           ),
         ),
+        // ロック/解除
+        _IconAction(
+          icon: layer.locked
+              ? Icons.lock_rounded
+              : Icons.lock_open_rounded,
+          color: layer.locked
+              ? AppTheme.accentBright
+              : AppTheme.textMuted,
+          tooltip: layer.locked ? 'ロック解除' : 'ロック',
+          onTap: onToggleLocked,
+        ),
         // 表示/非表示
         _IconAction(
           icon: layer.visible
@@ -485,43 +517,197 @@ class _LayerTile extends StatelessWidget {
     );
   }
 
-  Widget _buildTypeGrid() {
-    // 5種の効果を 3列 × 2行 のグリッドで表示
-    const perRow = 3;
-    final types = MosaicType.values;
-    final rows = <Widget>[];
-    for (int i = 0; i < types.length; i += perRow) {
-      final rowItems = <Widget>[];
-      for (int j = 0; j < perRow; j++) {
-        if (i + j < types.length) {
-          final t = types[i + j];
-          rowItems.add(Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(right: j < perRow - 1 ? 6 : 0),
-              child: _OptionChip(
-                label: _labelForType(t),
-                icon: _iconForType(t),
-                isSelected: layer.type == t,
-                onTap: () => onTypeChanged(t),
+  String _shapeName(MosaicShape s) {
+    switch (s) {
+      case MosaicShape.rectangle:
+        return '矩形';
+      case MosaicShape.ellipse:
+        return '楕円';
+      case MosaicShape.triangle:
+        return '三角';
+      case MosaicShape.heart:
+        return 'ハート';
+    }
+  }
+
+  IconData _shapeIconOf(MosaicShape s) {
+    switch (s) {
+      case MosaicShape.rectangle:
+        return Icons.crop_square_rounded;
+      case MosaicShape.ellipse:
+        return Icons.circle_outlined;
+      case MosaicShape.triangle:
+        return Icons.change_history_rounded;
+      case MosaicShape.heart:
+        return Icons.favorite_outline_rounded;
+    }
+  }
+
+  Widget _buildRotationSection(Keyframe? kf) {
+    // ラジアン → 度
+    final rad = kf?.rotation ?? 0.0;
+    final deg = (rad * 180 / 3.14159265358979).round();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text('回転', style: AppTheme.textLabel),
+            const Spacer(),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppTheme.accent.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+              ),
+              child: Text(
+                '$deg°',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.accentBright,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
               ),
             ),
-          ));
-        } else {
-          // 埋め合わせの空枠
-          rowItems.add(Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(right: j < perRow - 1 ? 6 : 0),
-              child: const SizedBox.shrink(),
+            const SizedBox(width: 6),
+            GestureDetector(
+              onTap: () => onRotationChanged(0.0),
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppTheme.bgHover.withValues(alpha: 0.6),
+                  borderRadius:
+                      BorderRadius.circular(AppTheme.radiusSmall),
+                  border: Border.all(
+                    color: AppTheme.borderColor.withValues(alpha: 0.5),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.refresh_rounded,
+                        size: 12, color: AppTheme.textMuted),
+                    const SizedBox(width: 3),
+                    Text(
+                      'リセット',
+                      style: AppTheme.textCaption
+                          .copyWith(fontSize: 10),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ));
-        }
-      }
-      rows.add(Row(children: rowItems));
-      if (i + perRow < types.length) {
-        rows.add(const SizedBox(height: 6));
-      }
-    }
-    return Column(children: rows);
+          ],
+        ),
+        Row(
+          children: [
+            _SliderButton(
+              icon: Icons.remove_rounded,
+              onTap: () => onRotationChanged(
+                ((deg - 1).clamp(-180, 180)) * 3.14159265358979 / 180,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Slider(
+                value: deg.toDouble().clamp(-180, 180),
+                min: -180,
+                max: 180,
+                divisions: 360,
+                onChanged: (v) =>
+                    onRotationChanged(v * 3.14159265358979 / 180),
+              ),
+            ),
+            const SizedBox(width: 4),
+            _SliderButton(
+              icon: Icons.add_rounded,
+              onTap: () => onRotationChanged(
+                ((deg + 1).clamp(-180, 180)) * 3.14159265358979 / 180,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// バケツ用色プリセット（システムカラー風 8色）
+  static const List<int> _colorPresets = [
+    0xFF000000, // 黒
+    0xFFFFFFFF, // 白
+    0xFFFF3B30, // 赤
+    0xFFFF9500, // オレンジ
+    0xFFFFCC00, // 黄
+    0xFF34C759, // 緑
+    0xFF007AFF, // 青
+    0xFFAF52DE, // 紫
+  ];
+
+  Widget _buildColorPalette() {
+    return Row(
+      children: [
+        for (int i = 0; i < _colorPresets.length; i++) ...[
+          if (i > 0) const SizedBox(width: 4),
+          Expanded(
+            child: GestureDetector(
+              onTap: () => onFillColorChanged(_colorPresets[i]),
+              behavior: HitTestBehavior.opaque,
+              child: AspectRatio(
+                aspectRatio: 1,
+                child: AnimatedContainer(
+                  duration: AppTheme.animFast,
+                  decoration: BoxDecoration(
+                    color: Color(_colorPresets[i]),
+                    borderRadius:
+                        BorderRadius.circular(AppTheme.radiusSmall),
+                    border: Border.all(
+                      color: layer.fillColor == _colorPresets[i]
+                          ? AppTheme.accentBright
+                          : Colors.white.withValues(alpha: 0.15),
+                      width: layer.fillColor == _colorPresets[i] ? 2.5 : 1,
+                    ),
+                    boxShadow: layer.fillColor == _colorPresets[i]
+                        ? [
+                            BoxShadow(
+                              color: AppTheme.accent.withValues(alpha: 0.4),
+                              blurRadius: 6,
+                              spreadRadius: -1,
+                            ),
+                          ]
+                        : null,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildTypeGrid() {
+    // 4種の効果を 1行 4列で表示
+    final types = MosaicType.values;
+    return Row(
+      children: [
+        for (int i = 0; i < types.length; i++) ...[
+          if (i > 0) const SizedBox(width: 6),
+          Expanded(
+            child: _OptionChip(
+              label: _labelForType(types[i]),
+              icon: _iconForType(types[i]),
+              isSelected: layer.type == types[i],
+              onTap: () => onTypeChanged(types[i]),
+            ),
+          ),
+        ],
+      ],
+    );
   }
 
   Widget _buildExpandedProperties(Keyframe? kf) {
@@ -538,47 +724,55 @@ class _LayerTile extends StatelessWidget {
           Text('効果', style: AppTheme.textLabel),
           const SizedBox(height: 6),
           _buildTypeGrid(),
-          const SizedBox(height: AppTheme.spaceMd),
-          Text('形状', style: AppTheme.textLabel),
-          const SizedBox(height: 6),
-          Row(
-            children: MosaicShape.values.map((s) {
-              final isLast = s == MosaicShape.values.last;
-              return Expanded(
-                child: Padding(
-                  padding: EdgeInsets.only(right: isLast ? 0 : 6),
-                  child: _OptionChip(
-                    label: _labelForShape(s),
-                    icon: _iconForShape(s),
-                    isSelected: layer.shape == s,
-                    onTap: () => onShapeChanged(s),
+          // バケツ選択時のみ色プリセットを表示
+          if (layer.type == MosaicType.fill) ...[
+            const SizedBox(height: AppTheme.spaceMd),
+            Row(
+              children: [
+                Text('色', style: AppTheme.textLabel),
+                const SizedBox(width: 8),
+                Container(
+                  width: 16,
+                  height: 16,
+                  decoration: BoxDecoration(
+                    color: Color(layer.fillColor),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: AppTheme.borderLight.withValues(alpha: 0.7),
+                    ),
                   ),
                 ),
-              );
-            }).toList(),
-          ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            _buildColorPalette(),
+          ],
           const SizedBox(height: AppTheme.spaceMd),
-          Text('適用範囲', style: AppTheme.textLabel),
+          // 形状ヘッダー（右端に内側/外側トグル）
+          Row(
+            children: [
+              Text('形状', style: AppTheme.textLabel),
+              const Spacer(),
+              _InvertToggle(
+                isInverted: layer.inverted,
+                onTap: () => onInvertedChanged(!layer.inverted),
+              ),
+            ],
+          ),
           const SizedBox(height: 6),
           Row(
             children: [
-              Expanded(
-                child: _OptionChip(
-                  label: '内側',
-                  icon: Icons.center_focus_strong_rounded,
-                  isSelected: !layer.inverted,
-                  onTap: () => onInvertedChanged(false),
+              for (int i = 0; i < MosaicShape.values.length; i++) ...[
+                if (i > 0) const SizedBox(width: 6),
+                Expanded(
+                  child: _OptionChip(
+                    label: _shapeName(MosaicShape.values[i]),
+                    icon: _shapeIconOf(MosaicShape.values[i]),
+                    isSelected: layer.shape == MosaicShape.values[i],
+                    onTap: () => onShapeChanged(MosaicShape.values[i]),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: _OptionChip(
-                  label: '外側',
-                  icon: Icons.filter_center_focus_rounded,
-                  isSelected: layer.inverted,
-                  onTap: () => onInvertedChanged(true),
-                ),
-              ),
+              ],
             ],
           ),
           const SizedBox(height: AppTheme.spaceMd),
@@ -634,6 +828,9 @@ class _LayerTile extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: AppTheme.spaceMd),
+          // 回転セクション
+          _buildRotationSection(kf),
           // 動画用: 時間範囲コントロール
           if (showTimeRange &&
               totalDuration != null &&
@@ -676,10 +873,8 @@ class _LayerTile extends StatelessWidget {
         return 'モザイク';
       case MosaicType.blur:
         return 'ぼかし';
-      case MosaicType.blackout:
-        return '黒塗り';
-      case MosaicType.whiteout:
-        return '白塗り';
+      case MosaicType.fill:
+        return 'バケツ';
       case MosaicType.noise:
         return 'ノイズ';
     }
@@ -691,32 +886,13 @@ class _LayerTile extends StatelessWidget {
         return Icons.grid_on_rounded;
       case MosaicType.blur:
         return Icons.blur_on_rounded;
-      case MosaicType.blackout:
-        return Icons.block_rounded;
-      case MosaicType.whiteout:
-        return Icons.circle_rounded;
+      case MosaicType.fill:
+        return Icons.format_color_fill_rounded;
       case MosaicType.noise:
         return Icons.grain_rounded;
     }
   }
 
-  String _labelForShape(MosaicShape s) {
-    switch (s) {
-      case MosaicShape.rectangle:
-        return '矩形';
-      case MosaicShape.ellipse:
-        return '楕円';
-    }
-  }
-
-  IconData _iconForShape(MosaicShape s) {
-    switch (s) {
-      case MosaicShape.rectangle:
-        return Icons.crop_square_rounded;
-      case MosaicShape.ellipse:
-        return Icons.circle_outlined;
-    }
-  }
 }
 
 class _IconAction extends StatelessWidget {
@@ -1380,6 +1556,68 @@ class _SliderButton extends StatelessWidget {
               color: AppTheme.borderColor.withValues(alpha: 0.5)),
         ),
         child: Icon(icon, size: 17, color: AppTheme.textSecondary),
+      ),
+    );
+  }
+}
+
+/// 「内側 ⇄ 外側」を切り替える小さなトグルチップ
+class _InvertToggle extends StatelessWidget {
+  final bool isInverted;
+  final VoidCallback onTap;
+
+  const _InvertToggle({required this.isInverted, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final label = isInverted ? '外側' : '内側';
+    final icon = isInverted
+        ? Icons.filter_center_focus_rounded
+        : Icons.center_focus_strong_rounded;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Tooltip(
+        message: 'タップで内側⇄外側を切替',
+        child: AnimatedContainer(
+          duration: AppTheme.animFast,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: isInverted
+                ? AppTheme.accent.withValues(alpha: 0.2)
+                : AppTheme.bgHover.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+            border: Border.all(
+              color: isInverted
+                  ? AppTheme.accent.withValues(alpha: 0.6)
+                  : AppTheme.borderColor.withValues(alpha: 0.5),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 13,
+                color: isInverted
+                    ? AppTheme.accentBright
+                    : AppTheme.textMuted,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: isInverted
+                      ? AppTheme.accentBright
+                      : AppTheme.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

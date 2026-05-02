@@ -86,6 +86,7 @@ class VideoExporter {
                 'w': kf.size.width,
                 'h': kf.size.height,
                 'intensity': kf.intensity,
+                'rotation': kf.rotation,
               })
           .toList();
 
@@ -93,6 +94,7 @@ class VideoExporter {
         'type': l.type.name,
         'shape': l.shape.name,
         'inverted': l.inverted,
+        'fillColor': l.fillColor,
         'startMs': l.startTime.inMilliseconds,
         'endMs': l.endTime.inMilliseconds,
         'keyframes': keyframes,

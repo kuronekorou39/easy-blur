@@ -3,14 +3,15 @@ import 'dart:ui';
 enum MosaicType {
   pixelate,
   blur,
-  blackout,
-  whiteout,
+  fill, // 単色塗りつぶし（旧 blackout/whiteout を統合、色は MosaicLayer.fillColor）
   noise,
 }
 
 enum MosaicShape {
   rectangle,
   ellipse,
+  triangle,
+  heart,
 }
 
 class Keyframe {
@@ -88,6 +89,13 @@ class MosaicLayer {
   /// true の場合、矩形の外側にエフェクトが適用される（内外反転）
   bool inverted;
 
+  /// true の場合、キャンバス上での選択・移動・リサイズができない
+  /// （レイヤーパネルからのプロパティ変更は可能）
+  bool locked;
+
+  /// fill エフェクトで使用する色（ARGB値）。デフォルトは黒。
+  int fillColor;
+
   /// レイヤーが表示され始める時刻（動画専用、画像では未使用）
   Duration startTime;
 
@@ -104,6 +112,8 @@ class MosaicLayer {
     this.shape = MosaicShape.rectangle,
     this.visible = true,
     this.inverted = false,
+    this.locked = false,
+    this.fillColor = 0xFF000000,
     this.startTime = Duration.zero,
     this.endTime = const Duration(days: 1),
     List<Keyframe>? keyframes,
@@ -166,32 +176,54 @@ class MosaicLayer {
         'shape': shape.name,
         'visible': visible,
         'inverted': inverted,
+        'locked': locked,
+        'fillColor': fillColor,
         'startTimeMs': startTime.inMilliseconds,
         'endTimeMs': endTime.inMilliseconds,
         'keyframes': keyframes.map((k) => k.toJson()).toList(),
       };
 
-  static MosaicLayer fromJson(Map<String, dynamic> json) => MosaicLayer(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        type: MosaicType.values.firstWhere(
-          (t) => t.name == json['type'],
+  static MosaicLayer fromJson(Map<String, dynamic> json) {
+    // 旧形式の blackout / whiteout を fill に自動移行
+    final rawType = json['type'] as String?;
+    MosaicType type;
+    int fillColor = (json['fillColor'] as num?)?.toInt() ?? 0xFF000000;
+    switch (rawType) {
+      case 'blackout':
+        type = MosaicType.fill;
+        fillColor = 0xFF000000;
+        break;
+      case 'whiteout':
+        type = MosaicType.fill;
+        fillColor = 0xFFFFFFFF;
+        break;
+      default:
+        type = MosaicType.values.firstWhere(
+          (t) => t.name == rawType,
           orElse: () => MosaicType.pixelate,
-        ),
-        shape: MosaicShape.values.firstWhere(
-          (s) => s.name == json['shape'],
-          orElse: () => MosaicShape.rectangle,
-        ),
-        visible: json['visible'] as bool? ?? true,
-        inverted: json['inverted'] as bool? ?? false,
-        startTime: Duration(
-            milliseconds: (json['startTimeMs'] as num?)?.toInt() ?? 0),
-        endTime: Duration(
-            milliseconds: (json['endTimeMs'] as num?)?.toInt() ??
-                const Duration(days: 1).inMilliseconds),
-        keyframes: (json['keyframes'] as List<dynamic>?)
-                ?.map((k) => Keyframe.fromJson(k as Map<String, dynamic>))
-                .toList() ??
-            [],
-      );
+        );
+    }
+    return MosaicLayer(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      type: type,
+      shape: MosaicShape.values.firstWhere(
+        (s) => s.name == json['shape'],
+        orElse: () => MosaicShape.rectangle,
+      ),
+      visible: json['visible'] as bool? ?? true,
+      inverted: json['inverted'] as bool? ?? false,
+      locked: json['locked'] as bool? ?? false,
+      fillColor: fillColor,
+      startTime: Duration(
+          milliseconds: (json['startTimeMs'] as num?)?.toInt() ?? 0),
+      endTime: Duration(
+          milliseconds: (json['endTimeMs'] as num?)?.toInt() ??
+              const Duration(days: 1).inMilliseconds),
+      keyframes: (json['keyframes'] as List<dynamic>?)
+              ?.map((k) => Keyframe.fromJson(k as Map<String, dynamic>))
+              .toList() ??
+          [],
+    );
+  }
 }

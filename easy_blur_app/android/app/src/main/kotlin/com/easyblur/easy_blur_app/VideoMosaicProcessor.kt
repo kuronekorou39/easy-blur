@@ -61,16 +61,23 @@ class VideoMosaicProcessor {
         val out = mutableListOf<LayerParam>()
         for (i in 0 until arr.length()) {
             val obj = arr.getJSONObject(i)
-            val type = when (obj.getString("type")) {
-                "pixelate" -> MosaicType.PIXELATE
-                "blur" -> MosaicType.BLUR
-                "blackout" -> MosaicType.BLACKOUT
-                "whiteout" -> MosaicType.WHITEOUT
-                "noise" -> MosaicType.NOISE
-                else -> MosaicType.PIXELATE
+            val rawType = obj.getString("type")
+            // 旧形式の blackout / whiteout は fill に自動変換
+            val (type, legacyFillColor) = when (rawType) {
+                "pixelate" -> MosaicType.PIXELATE to null
+                "blur" -> MosaicType.BLUR to null
+                "fill" -> MosaicType.FILL to null
+                "blackout" -> MosaicType.FILL to 0xFF000000.toInt()
+                "whiteout" -> MosaicType.FILL to 0xFFFFFFFF.toInt()
+                "noise" -> MosaicType.NOISE to null
+                else -> MosaicType.PIXELATE to null
             }
+            val fillColor = legacyFillColor
+                ?: (obj.optLong("fillColor", 0xFF000000L)).toInt()
             val shape = when (obj.getString("shape")) {
                 "ellipse" -> MosaicShape.ELLIPSE
+                "triangle" -> MosaicShape.TRIANGLE
+                "heart" -> MosaicShape.HEART
                 else -> MosaicShape.RECTANGLE
             }
             val kfArr = obj.getJSONArray("keyframes")
@@ -85,6 +92,7 @@ class VideoMosaicProcessor {
                         w = k.getDouble("w").toFloat(),
                         h = k.getDouble("h").toFloat(),
                         intensity = k.getDouble("intensity").toFloat(),
+                        rotation = k.optDouble("rotation", 0.0).toFloat(),
                     )
                 )
             }
@@ -93,6 +101,7 @@ class VideoMosaicProcessor {
                     type = type,
                     shape = shape,
                     inverted = obj.optBoolean("inverted", false),
+                    fillColor = fillColor,
                     startMs = obj.getLong("startMs"),
                     endMs = obj.getLong("endMs"),
                     keyframes = kfs,
@@ -103,8 +112,8 @@ class VideoMosaicProcessor {
     }
 }
 
-enum class MosaicType { PIXELATE, BLUR, BLACKOUT, WHITEOUT, NOISE }
-enum class MosaicShape { RECTANGLE, ELLIPSE }
+enum class MosaicType { PIXELATE, BLUR, FILL, NOISE }
+enum class MosaicShape { RECTANGLE, ELLIPSE, TRIANGLE, HEART }
 
 data class KeyframeParam(
     val timeMs: Long,
@@ -113,12 +122,14 @@ data class KeyframeParam(
     val w: Float,
     val h: Float,
     val intensity: Float,
+    val rotation: Float = 0f,
 )
 
 data class LayerParam(
     val type: MosaicType,
     val shape: MosaicShape,
     val inverted: Boolean,
+    val fillColor: Int,
     val startMs: Long,
     val endMs: Long,
     val keyframes: List<KeyframeParam>,
@@ -153,6 +164,7 @@ data class LayerParam(
                     w = a.w + (b.w - a.w) * t,
                     h = a.h + (b.h - a.h) * t,
                     intensity = a.intensity + (b.intensity - a.intensity) * t,
+                    rotation = a.rotation + (b.rotation - a.rotation) * t,
                 )
             }
         }

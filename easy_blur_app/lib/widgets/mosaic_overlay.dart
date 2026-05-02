@@ -28,6 +28,8 @@ class MosaicOverlay extends StatelessWidget {
     required this.onResize,
   });
 
+  bool get _locked => layer.locked;
+
   @override
   Widget build(BuildContext context) {
     // タッチ領域（見た目は _Handle 内で 14pt の円）。指で掴みやすいよう広めに。
@@ -42,13 +44,15 @@ class MosaicOverlay extends StatelessWidget {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          // 中央：移動用タップ＋ドラッグエリア
+          // 中央：移動用タップ＋ドラッグエリア（ロック中は完全に透過）
           Positioned(
             left: handleSize,
             top: handleSize,
             width: rect.width,
             height: rect.height,
-            child: GestureDetector(
+            child: IgnorePointer(
+              ignoring: _locked,
+              child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: onTap,
               onPanUpdate: (d) {
@@ -82,10 +86,11 @@ class MosaicOverlay extends StatelessWidget {
                 ),
               ),
             ),
+            ),
           ),
 
-          // 選択時のみ表示されるコーナーハンドル
-          if (isSelected) ...[
+          // 選択時のみ表示されるコーナーハンドル（ロック中は非表示）
+          if (isSelected && !_locked) ...[
             _Handle(
               left: 0,
               top: 0,
@@ -110,10 +115,10 @@ class MosaicOverlay extends StatelessWidget {
               size: handleSize,
               onDrag: (d) => onResize(d, HandleCorner.bottomRight),
             ),
-            // レイヤー名バッジ
+            // レイヤー名バッジ（矩形の外側、上部に添える）
             Positioned(
-              left: handleSize + 6,
-              top: handleSize + 6,
+              left: handleSize,
+              top: handleSize - 22,
               child: IgnorePointer(
                 child: Container(
                   padding: const EdgeInsets.symmetric(
@@ -121,6 +126,13 @@ class MosaicOverlay extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: AppTheme.accent,
                     borderRadius: BorderRadius.circular(4),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.35),
+                        blurRadius: 4,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
                   ),
                   child: Text(
                     layer.name,
@@ -128,6 +140,7 @@ class MosaicOverlay extends StatelessWidget {
                       fontSize: 10,
                       color: Colors.white,
                       fontWeight: FontWeight.w700,
+                      height: 1.2,
                     ),
                   ),
                 ),

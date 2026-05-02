@@ -2,6 +2,7 @@ import 'dart:math';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../models/models.dart';
+import '../utils/shape_paths.dart';
 
 /// 画像レイヤー上にモザイクを描画するペインター
 /// キャンバスサイズに合わせてアスペクト比を保持して画像を中央描画する
@@ -115,13 +116,7 @@ class MosaicPainter extends CustomPainter {
     }
 
     // 形状でクリップ
-    final shapePath = Path();
-    if (layer.shape == MosaicShape.ellipse) {
-      shapePath.addOval(rect);
-    } else {
-      shapePath
-          .addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)));
-    }
+    final shapePath = ShapePaths.of(layer.shape, rect);
 
     if (layer.inverted) {
       // 反転: 画像領域から形状パスを除外
@@ -143,11 +138,8 @@ class MosaicPainter extends CustomPainter {
       case MosaicType.blur:
         _drawBlur(canvas, effectRect, state.intensity, imageDst);
         break;
-      case MosaicType.blackout:
-        canvas.drawRect(effectRect, Paint()..color = Colors.black);
-        break;
-      case MosaicType.whiteout:
-        canvas.drawRect(effectRect, Paint()..color = Colors.white);
+      case MosaicType.fill:
+        canvas.drawRect(effectRect, Paint()..color = Color(layer.fillColor));
         break;
       case MosaicType.noise:
         _drawNoise(canvas, effectRect, state.intensity, scale);

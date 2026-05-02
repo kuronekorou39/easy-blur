@@ -46,6 +46,8 @@ class MosaicRenderer(
     private var uIntensityMosaic = 0
     private var uShapeMosaic = 0
     private var uInvertedMosaic = 0
+    private var uFillColorMosaic = 0
+    private var uRotationMosaic = 0
 
     private lateinit var vertexBuf: FloatBuffer
     private val mvpMatrix = FloatArray(16)
@@ -110,6 +112,8 @@ class MosaicRenderer(
         uIntensityMosaic = GLES20.glGetUniformLocation(mosaicProgram, "u_intensity")
         uShapeMosaic = GLES20.glGetUniformLocation(mosaicProgram, "u_shape")
         uInvertedMosaic = GLES20.glGetUniformLocation(mosaicProgram, "u_inverted")
+        uFillColorMosaic = GLES20.glGetUniformLocation(mosaicProgram, "u_fill_color")
+        uRotationMosaic = GLES20.glGetUniformLocation(mosaicProgram, "u_rotation")
     }
 
     /**
@@ -221,19 +225,27 @@ class MosaicRenderer(
         val effect = when (layer.type) {
             MosaicType.PIXELATE -> 0
             MosaicType.BLUR -> 1
-            MosaicType.BLACKOUT -> 2
-            MosaicType.WHITEOUT -> 3
-            MosaicType.NOISE -> 4
+            MosaicType.FILL -> 2
+            MosaicType.NOISE -> 3
         }
         val shape = when (layer.shape) {
             MosaicShape.RECTANGLE -> 0
             MosaicShape.ELLIPSE -> 1
+            MosaicShape.TRIANGLE -> 2
+            MosaicShape.HEART -> 3
         }
         GLES20.glUniform1i(uEffectMosaic, effect)
         GLES20.glUniform1i(uShapeMosaic, shape)
         GLES20.glUniform1i(uInvertedMosaic, if (layer.inverted) 1 else 0)
         GLES20.glUniform1f(uIntensityMosaic, max(2f, kf.intensity))
         GLES20.glUniform4f(uSampleBoxMosaic, u0, v0, u1, v1)
+        // ARGB int → RGBA float
+        val a = ((layer.fillColor shr 24) and 0xFF) / 255f
+        val r = ((layer.fillColor shr 16) and 0xFF) / 255f
+        val g = ((layer.fillColor shr 8) and 0xFF) / 255f
+        val b = (layer.fillColor and 0xFF) / 255f
+        GLES20.glUniform4f(uFillColorMosaic, r, g, b, a)
+        GLES20.glUniform1f(uRotationMosaic, kf.rotation)
 
         quadBuf.position(0)
         GLES20.glEnableVertexAttribArray(aPosMosaic)
@@ -304,33 +316,69 @@ class MosaicRenderer(
             uniform int u_effect;
             uniform int u_shape;
             uniform int u_inverted;
+            uniform vec4 u_fill_color;
             uniform float u_intensity;
+            uniform float u_rotation;
 
             void main() {
-                // 矩形内判定
-                bool inBox = (v_uv.x >= u_sample_box.x && v_uv.x <= u_sample_box.z
-                           && v_uv.y >= u_sample_box.y && v_uv.y <= u_sample_box.w);
-                // 楕円の場合は楕円方程式で上書き
+                // 矩形ローカル座標 (0..1)
+                vec2 boxSize = vec2(u_sample_box.z - u_sample_box.x,
+                                    u_sample_box.w - u_sample_box.y);
+                vec2 local = (v_uv - u_sample_box.xy) / boxSize;
+
+                // レイヤーが回転していれば、形状判定用に逆回転を適用
+                if (u_rotation != 0.0) {
+                    vec2 centered = local - 0.5;
+                    float cR = cos(-u_rotation);
+                    float sR = sin(-u_rotation);
+                    local = vec2(
+                        centered.x * cR - centered.y * sR,
+                        centered.x * sR + centered.y * cR
+                    ) + 0.5;
+                }
+
+                // 形状内判定
+                bool inBox = (local.x >= 0.0 && local.x <= 1.0
+                           && local.y >= 0.0 && local.y <= 1.0);
                 if (u_shape == 1) {
-                    vec2 center = vec2((u_sample_box.x + u_sample_box.z) * 0.5,
-                                       (u_sample_box.y + u_sample_box.w) * 0.5);
-                    vec2 r = vec2((u_sample_box.z - u_sample_box.x) * 0.5,
-                                  (u_sample_box.w - u_sample_box.y) * 0.5);
-                    vec2 d = v_uv - center;
-                    float e = (d.x * d.x) / (r.x * r.x) + (d.y * d.y) / (r.y * r.y);
+                    // 楕円
+                    vec2 d = local - vec2(0.5);
+                    float e = (d.x * d.x) / 0.25 + (d.y * d.y) / 0.25;
                     inBox = e <= 1.0;
+                } else if (u_shape == 2) {
+                    // 上向き三角形：頂点(0.5,0), 底辺(0,1)〜(1,1)
+                    // 重心座標で内外判定
+                    vec2 a = vec2(0.5, 0.0);
+                    vec2 b = vec2(0.0, 1.0);
+                    vec2 c = vec2(1.0, 1.0);
+                    vec2 v0 = c - b;
+                    vec2 v1 = a - b;
+                    vec2 v2 = local - b;
+                    float dot00 = dot(v0, v0);
+                    float dot01 = dot(v0, v1);
+                    float dot02 = dot(v0, v2);
+                    float dot11 = dot(v1, v1);
+                    float dot12 = dot(v1, v2);
+                    float invDenom = 1.0 / (dot00 * dot11 - dot01 * dot01);
+                    float u = (dot11 * dot02 - dot01 * dot12) * invDenom;
+                    float v = (dot00 * dot12 - dot01 * dot02) * invDenom;
+                    inBox = (u >= 0.0) && (v >= 0.0) && (u + v <= 1.0);
+                } else if (u_shape == 3) {
+                    // ハート：(-1..1) に正規化、UV座標系の y 反転で上向きハート
+                    // ハート方程式: (x² + y² - 1)³ - x²y³ ≤ 0
+                    vec2 p = (local - 0.5) * 2.4; // 矩形に収まるよう少し縮小
+                    float ry = -p.y; // y軸反転（数学座標→UV）
+                    float t = p.x * p.x + ry * ry - 1.0;
+                    inBox = (t * t * t - p.x * p.x * ry * ry * ry) <= 0.0;
                 }
                 // 反転モードでは内外判定を反転
                 bool shouldApply = (u_inverted == 1) ? !inBox : inBox;
                 if (!shouldApply) discard;
 
                 if (u_effect == 2) {
-                    // 黒塗り
-                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                    // 単色塗り（バケツ）
+                    gl_FragColor = u_fill_color;
                 } else if (u_effect == 3) {
-                    // 白塗り
-                    gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
-                } else if (u_effect == 4) {
                     // ノイズ（決定論的疑似乱数）
                     float n = fract(sin(dot(v_uv * 1000.0, vec2(12.9898, 78.233))) * 43758.5453);
                     gl_FragColor = vec4(vec3(n), 1.0);

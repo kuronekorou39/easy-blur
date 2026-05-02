@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../models/models.dart';
+import '../utils/shape_paths.dart';
 
 /// プレビュー用のモザイク効果を Widget で表現する。
 /// BackdropFilter を使うことで、下層にある VideoPlayer や Image の実フレームに
@@ -20,6 +21,12 @@ class MosaicEffectLayer extends StatelessWidget {
   /// true: 矩形の外側にエフェクトを適用
   final bool inverted;
 
+  /// fill エフェクトで使用する色（ARGB値）
+  final int fillColor;
+
+  /// レイヤーの回転（ラジアン、矩形中心基準）
+  final double rotation;
+
   const MosaicEffectLayer({
     super.key,
     required this.canvasRect,
@@ -27,6 +34,8 @@ class MosaicEffectLayer extends StatelessWidget {
     required this.shape,
     required this.intensity,
     this.inverted = false,
+    this.fillColor = 0xFF000000,
+    this.rotation = 0,
   });
 
   @override
@@ -34,13 +43,14 @@ class MosaicEffectLayer extends StatelessWidget {
     final effect = _buildEffect();
 
     if (inverted) {
-      // 反転モード：親全体を覆い、矩形領域を「穴」として抜く
+      // 反転モード：親全体を覆い、回転後の形状領域を「穴」として抜く
       return Positioned.fill(
         child: IgnorePointer(
           child: ClipPath(
-            clipper: _InvertedRectClipper(
+            clipper: _InvertedShapeClipper(
               hole: canvasRect,
               shape: shape,
+              rotation: rotation,
             ),
             child: effect,
           ),
@@ -48,20 +58,19 @@ class MosaicEffectLayer extends StatelessWidget {
       );
     }
 
-    // 通常モード：矩形領域にクリップしてエフェクト
-    Widget clipChild(Widget child) {
-      if (shape == MosaicShape.ellipse) {
-        return ClipOval(child: child);
-      }
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(4),
-        child: child,
-      );
-    }
-
+    // 通常モード：形状でクリップ → Transform で矩形中心を基準に回転
     return Positioned.fromRect(
       rect: canvasRect,
-      child: IgnorePointer(child: clipChild(effect)),
+      child: IgnorePointer(
+        child: Transform.rotate(
+          angle: rotation,
+          alignment: Alignment.center,
+          child: ClipPath(
+            clipper: _ShapeClipper(shape: shape),
+            child: effect,
+          ),
+        ),
+      ),
     );
   }
 
@@ -103,11 +112,8 @@ class MosaicEffectLayer extends StatelessWidget {
           ],
         );
 
-      case MosaicType.blackout:
-        return Container(color: Colors.black);
-
-      case MosaicType.whiteout:
-        return Container(color: Colors.white);
+      case MosaicType.fill:
+        return Container(color: Color(fillColor));
 
       case MosaicType.noise:
         // ノイズ：微細なランダムドット模様をCustomPainterで描画
@@ -147,30 +153,46 @@ class _NoisePainter extends CustomPainter {
       oldDelegate.intensity != intensity;
 }
 
-/// 反転モザイク用のクリッパー。親全体から矩形 or 楕円の穴をくり抜く。
-class _InvertedRectClipper extends CustomClipper<Path> {
-  final Rect hole;
+/// レイヤー矩形をローカル座標で形状クリップ
+class _ShapeClipper extends CustomClipper<Path> {
   final MosaicShape shape;
 
-  _InvertedRectClipper({required this.hole, required this.shape});
+  _ShapeClipper({required this.shape});
+
+  @override
+  Path getClip(Size size) {
+    return ShapePaths.of(shape, Rect.fromLTWH(0, 0, size.width, size.height));
+  }
+
+  @override
+  bool shouldReclip(_ShapeClipper old) => old.shape != shape;
+}
+
+/// 反転モザイク用のクリッパー。親全体から指定形状（回転含む）の穴をくり抜く。
+class _InvertedShapeClipper extends CustomClipper<Path> {
+  final Rect hole;
+  final MosaicShape shape;
+  final double rotation;
+
+  _InvertedShapeClipper({
+    required this.hole,
+    required this.shape,
+    required this.rotation,
+  });
 
   @override
   Path getClip(Size size) {
     final outer = Path()
       ..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
-    final inner = Path();
-    if (shape == MosaicShape.ellipse) {
-      inner.addOval(hole);
-    } else {
-      inner.addRRect(
-          RRect.fromRectAndRadius(hole, const Radius.circular(4)));
-    }
+    final inner = ShapePaths.of(shape, hole, rotationRadians: rotation);
     return Path.combine(PathOperation.difference, outer, inner);
   }
 
   @override
-  bool shouldReclip(_InvertedRectClipper old) =>
-      old.hole != hole || old.shape != shape;
+  bool shouldReclip(_InvertedShapeClipper old) =>
+      old.hole != hole ||
+      old.shape != shape ||
+      old.rotation != rotation;
 }
 
 class _PixelateGridPainter extends CustomPainter {

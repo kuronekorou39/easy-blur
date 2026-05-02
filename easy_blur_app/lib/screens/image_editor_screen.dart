@@ -167,6 +167,13 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
     _scheduleSave();
   }
 
+  void _toggleLocked(int index) {
+    setState(() {
+      _project.layers[index].locked = !_project.layers[index].locked;
+    });
+    _scheduleSave();
+  }
+
   void _reorderLayers(int oldIndex, int newIndex) {
     setState(() {
       if (newIndex > oldIndex) newIndex--;
@@ -196,10 +203,24 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
     _scheduleSave();
   }
 
+  void _onFillColorChanged(int color) {
+    final layer = _project.selectedLayer;
+    if (layer == null) return;
+    setState(() => layer.fillColor = color);
+    _scheduleSave();
+  }
+
   void _onIntensityChanged(double value) {
     final layer = _project.selectedLayer;
     if (layer == null || layer.keyframes.isEmpty) return;
     setState(() => layer.keyframes.first.intensity = value);
+    _scheduleSave();
+  }
+
+  void _onRotationChanged(double radians) {
+    final layer = _project.selectedLayer;
+    if (layer == null || layer.keyframes.isEmpty) return;
+    setState(() => layer.keyframes.first.rotation = radians);
     _scheduleSave();
   }
 
@@ -238,7 +259,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
   void _moveLayer(int index, Offset canvasDelta, double scale) {
     if (index < 0 || index >= _project.layers.length) return;
     final layer = _project.layers[index];
-    if (layer.keyframes.isEmpty) return;
+    if (layer.locked || layer.keyframes.isEmpty) return;
     final kf = layer.keyframes.first;
     setState(() {
       kf.position = Offset(
@@ -255,7 +276,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
       double scale) {
     if (index < 0 || index >= _project.layers.length) return;
     final layer = _project.layers[index];
-    if (layer.keyframes.isEmpty) return;
+    if (layer.locked || layer.keyframes.isEmpty) return;
     final kf = layer.keyframes.first;
 
     // 画像座標系でのデルタ
@@ -481,11 +502,14 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
               onTypeChanged: _onTypeChanged,
               onShapeChanged: _onShapeChanged,
               onInvertedChanged: _onInvertedChanged,
+              onFillColorChanged: _onFillColorChanged,
               onIntensityChanged: _onIntensityChanged,
+              onRotationChanged: _onRotationChanged,
               onSelectLayer: _selectLayer,
               onAddLayer: _addLayer,
               onDeleteLayer: _deleteLayer,
               onToggleVisibility: _toggleVisibility,
+              onToggleLocked: _toggleLocked,
               onReorderLayers: _reorderLayers,
             ),
           ],
@@ -547,8 +571,11 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
                     type: _project.layers[i].type,
                     shape: _project.layers[i].shape,
                     inverted: _project.layers[i].inverted,
+                    fillColor: _project.layers[i].fillColor,
                     intensity:
                         _project.layers[i].keyframes.first.intensity,
+                    rotation:
+                        _project.layers[i].keyframes.first.rotation,
                   ),
               // 各レイヤーのオーバーレイ（選択枠・ハンドル）
               for (int i = 0; i < _project.layers.length; i++)

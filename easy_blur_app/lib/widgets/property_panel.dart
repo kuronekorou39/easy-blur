@@ -204,10 +204,8 @@ class PropertyPanel extends StatelessWidget {
         return 'モザイク';
       case MosaicType.blur:
         return 'ぼかし';
-      case MosaicType.blackout:
-        return '黒塗り';
-      case MosaicType.whiteout:
-        return '白塗り';
+      case MosaicType.fill:
+        return 'バケツ';
       case MosaicType.noise:
         return 'ノイズ';
     }
@@ -219,10 +217,8 @@ class PropertyPanel extends StatelessWidget {
         return Icons.grid_on_rounded;
       case MosaicType.blur:
         return Icons.blur_on_rounded;
-      case MosaicType.blackout:
-        return Icons.block_rounded;
-      case MosaicType.whiteout:
-        return Icons.circle_rounded;
+      case MosaicType.fill:
+        return Icons.format_color_fill_rounded;
       case MosaicType.noise:
         return Icons.grain_rounded;
     }
@@ -234,6 +230,10 @@ class PropertyPanel extends StatelessWidget {
         return '矩形';
       case MosaicShape.ellipse:
         return '楕円';
+      case MosaicShape.triangle:
+        return '三角';
+      case MosaicShape.heart:
+        return 'ハート';
     }
   }
 
@@ -243,6 +243,10 @@ class PropertyPanel extends StatelessWidget {
         return Icons.crop_square_rounded;
       case MosaicShape.ellipse:
         return Icons.circle_outlined;
+      case MosaicShape.triangle:
+        return Icons.change_history_rounded;
+      case MosaicShape.heart:
+        return Icons.favorite_outline_rounded;
     }
   }
 }

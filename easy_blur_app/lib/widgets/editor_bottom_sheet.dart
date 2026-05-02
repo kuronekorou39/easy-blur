@@ -15,11 +15,14 @@ class EditorBottomSheet extends StatefulWidget {
   final ValueChanged<MosaicType> onTypeChanged;
   final ValueChanged<MosaicShape> onShapeChanged;
   final ValueChanged<bool> onInvertedChanged;
+  final ValueChanged<int> onFillColorChanged;
   final ValueChanged<double> onIntensityChanged;
+  final ValueChanged<double> onRotationChanged;
   final ValueChanged<int> onSelectLayer;
   final VoidCallback onAddLayer;
   final ValueChanged<int> onDeleteLayer;
   final ValueChanged<int> onToggleVisibility;
+  final ValueChanged<int> onToggleLocked;
   final void Function(int oldIndex, int newIndex) onReorderLayers;
 
   // 動画専用: 時間範囲編集
@@ -41,11 +44,14 @@ class EditorBottomSheet extends StatefulWidget {
     required this.onTypeChanged,
     required this.onShapeChanged,
     required this.onInvertedChanged,
+    required this.onFillColorChanged,
     required this.onIntensityChanged,
+    required this.onRotationChanged,
     required this.onSelectLayer,
     required this.onAddLayer,
     required this.onDeleteLayer,
     required this.onToggleVisibility,
+    required this.onToggleLocked,
     required this.onReorderLayers,
     this.showTimeRange = false,
     this.currentTime,
@@ -157,11 +163,14 @@ class _EditorBottomSheetState extends State<EditorBottomSheet>
                           onAdd: widget.onAddLayer,
                           onDelete: widget.onDeleteLayer,
                           onToggleVisibility: widget.onToggleVisibility,
+                          onToggleLocked: widget.onToggleLocked,
                           onReorder: widget.onReorderLayers,
                           onTypeChanged: widget.onTypeChanged,
                           onShapeChanged: widget.onShapeChanged,
                           onInvertedChanged: widget.onInvertedChanged,
+                          onFillColorChanged: widget.onFillColorChanged,
                           onIntensityChanged: widget.onIntensityChanged,
+                          onRotationChanged: widget.onRotationChanged,
                           showTimeRange: widget.showTimeRange,
                           currentTime: widget.currentTime,
                           totalDuration: widget.totalDuration,
