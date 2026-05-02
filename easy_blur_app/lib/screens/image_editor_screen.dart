@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
@@ -13,6 +14,7 @@ import '../widgets/editor_bottom_sheet.dart';
 import '../widgets/floating_action_button_row.dart';
 import '../widgets/mosaic_effect_layer.dart';
 import '../widgets/mosaic_overlay.dart';
+import '../widgets/preview_overlay.dart';
 
 class ImageEditorScreen extends StatefulWidget {
   final EditorProject project;
@@ -31,6 +33,10 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
   bool _saving = false;
   String? _loadError;
   final GlobalKey _canvasKey = GlobalKey();
+
+  // プレビュー用
+  Uint8List? _previewBytes;
+  bool _previewLoading = false;
 
   final ProjectHistory _history = ProjectHistory();
   Timer? _historyPushTimer;
@@ -322,6 +328,46 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
     _scheduleSave();
   }
 
+  // --- プレビュー（出力相当の合成画像） ---
+
+  Future<void> _showPreview() async {
+    if (_uiImage == null || _previewLoading) return;
+    setState(() => _previewLoading = true);
+    try {
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      final painter = MosaicPainter(
+        mediaImage: _uiImage,
+        layers: _project.layers,
+        currentTime: Duration.zero,
+        mediaSize: _imageSize,
+        selectedLayerIndex: null,
+        isPreview: false,
+      );
+      painter.paint(canvas, _imageSize);
+      final picture = recorder.endRecording();
+      final img = await picture.toImage(
+        _imageSize.width.round(),
+        _imageSize.height.round(),
+      );
+      picture.dispose();
+      final byteData =
+          await img.toByteData(format: ui.ImageByteFormat.png);
+      img.dispose();
+      if (byteData == null) throw Exception('プレビュー生成失敗');
+      if (!mounted) return;
+      setState(() => _previewBytes = byteData.buffer.asUint8List());
+    } catch (_) {
+      // 失敗時は無視
+    } finally {
+      if (mounted) setState(() => _previewLoading = false);
+    }
+  }
+
+  void _closePreview() {
+    setState(() => _previewBytes = null);
+  }
+
   // --- 保存 ---
 
   Future<void> _saveImage() async {
@@ -514,7 +560,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
             ),
           ],
         ),
-        // フローティング戻る/保存ボタン + Undo/Redo
+        // フローティング戻る/保存ボタン + Undo/Redo + プレビュー
         FloatingActionButtonRow(
           onBack: _handleBack,
           onSave: _saveImage,
@@ -523,7 +569,15 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
           onRedo: _redo,
           canUndo: _history.canUndo,
           canRedo: _history.canRedo,
+          onPreview: _showPreview,
+          isPreviewLoading: _previewLoading,
         ),
+        // プレビューオーバーレイ
+        if (_previewBytes != null)
+          PreviewOverlay(
+            imageBytes: _previewBytes!,
+            onClose: _closePreview,
+          ),
       ],
     );
   }

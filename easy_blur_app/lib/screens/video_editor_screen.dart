@@ -1,10 +1,14 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
 import 'package:video_player/video_player.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 import '../models/models.dart';
+import '../painters/mosaic_painter.dart';
 import '../utils/project_history.dart';
 import '../utils/project_storage.dart';
 import '../utils/theme.dart';
@@ -14,6 +18,7 @@ import '../widgets/editor_bottom_sheet.dart';
 import '../widgets/floating_action_button_row.dart';
 import '../widgets/mosaic_effect_layer.dart';
 import '../widgets/mosaic_overlay.dart';
+import '../widgets/preview_overlay.dart';
 import '../widgets/view_mode_toggle.dart';
 
 class VideoEditorScreen extends StatefulWidget {
@@ -55,6 +60,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   // 編集履歴（Undo/Redo）
   final ProjectHistory _history = ProjectHistory();
   Timer? _historyPushTimer;
+
+  // プレビュー
+  Uint8List? _previewBytes;
+  bool _previewLoading = false;
 
   @override
   void initState() {
@@ -564,6 +573,108 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _scheduleSave();
   }
 
+  // --- プレビュー（現在フレーム + 出力相当の合成画像） ---
+
+  Future<void> _showPreview() async {
+    if (_videoController == null || _previewLoading) return;
+    if (_videoController!.value.isPlaying) {
+      _videoController!.pause();
+      setState(() => _playing = false);
+    }
+    setState(() => _previewLoading = true);
+    try {
+      final thumbBytes = await VideoThumbnail.thumbnailData(
+        video: _project.mediaPath,
+        timeMs: _currentTime.inMilliseconds,
+        imageFormat: ImageFormat.PNG,
+        quality: 100,
+      );
+      if (thumbBytes == null || thumbBytes.isEmpty) {
+        throw Exception('フレーム取得失敗');
+      }
+      final codec = await ui.instantiateImageCodec(thumbBytes);
+      final frame = await codec.getNextFrame();
+      codec.dispose();
+      final frameImage = frame.image;
+      try {
+        final frameSize = Size(
+          frameImage.width.toDouble(),
+          frameImage.height.toDouble(),
+        );
+        final sx = frameSize.width / _videoSize.width;
+        final sy = frameSize.height / _videoSize.height;
+        final scale = (sx + sy) / 2;
+
+        // レイヤーをフレーム座標系にスケール
+        final scaledLayers = <MosaicLayer>[];
+        for (final l in _project.layers) {
+          if (!l.isActiveAt(_currentTime) ||
+              l.keyframes.isEmpty ||
+              !l.visible) {
+            continue;
+          }
+          scaledLayers.add(MosaicLayer(
+            id: l.id,
+            name: l.name,
+            type: l.type,
+            shape: l.shape,
+            visible: l.visible,
+            inverted: l.inverted,
+            locked: l.locked,
+            fillColor: l.fillColor,
+            startTime: l.startTime,
+            endTime: l.endTime,
+            keyframes: l.keyframes
+                .map((kf) => Keyframe(
+                      time: kf.time,
+                      position: Offset(
+                          kf.position.dx * sx, kf.position.dy * sy),
+                      size: Size(
+                          kf.size.width * sx, kf.size.height * sy),
+                      rotation: kf.rotation,
+                      intensity: kf.intensity * scale,
+                    ))
+                .toList(),
+          ));
+        }
+
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        final painter = MosaicPainter(
+          mediaImage: frameImage,
+          layers: scaledLayers,
+          currentTime: _currentTime,
+          mediaSize: frameSize,
+          selectedLayerIndex: null,
+          isPreview: false,
+        );
+        painter.paint(canvas, frameSize);
+        final picture = recorder.endRecording();
+        final saved = await picture.toImage(
+          frameSize.width.round(),
+          frameSize.height.round(),
+        );
+        picture.dispose();
+        final byteData =
+            await saved.toByteData(format: ui.ImageByteFormat.png);
+        saved.dispose();
+        if (byteData == null) throw Exception('プレビュー生成失敗');
+        if (!mounted) return;
+        setState(() => _previewBytes = byteData.buffer.asUint8List());
+      } finally {
+        frameImage.dispose();
+      }
+    } catch (_) {
+      // 失敗時は無視
+    } finally {
+      if (mounted) setState(() => _previewLoading = false);
+    }
+  }
+
+  void _closePreview() {
+    setState(() => _previewBytes = null);
+  }
+
   // --- 動画保存（ネイティブ Kotlin + MediaCodec でモザイクを焼き込み）---
 
   Future<void> _saveVideo() async {
@@ -797,7 +908,15 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           onRedo: _redo,
           canUndo: _history.canUndo,
           canRedo: _history.canRedo,
+          onPreview: _showPreview,
+          isPreviewLoading: _previewLoading,
         ),
+        if (_previewBytes != null)
+          PreviewOverlay(
+            imageBytes: _previewBytes!,
+            onClose: _closePreview,
+            caption: '動画は現在フレームを合成（実際の出力は時間軸で適用）',
+          ),
         // モード切替ボタン（FABの下）
         Positioned(
           top: topInset + 60,

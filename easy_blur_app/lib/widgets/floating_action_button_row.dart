@@ -15,6 +15,10 @@ class FloatingActionButtonRow extends StatelessWidget {
   final bool canUndo;
   final bool canRedo;
 
+  /// プレビューコールバック（出力相当の合成画像を全画面表示）。null なら非表示。
+  final VoidCallback? onPreview;
+  final bool isPreviewLoading;
+
   const FloatingActionButtonRow({
     super.key,
     required this.onBack,
@@ -24,6 +28,8 @@ class FloatingActionButtonRow extends StatelessWidget {
     this.onRedo,
     this.canUndo = false,
     this.canRedo = false,
+    this.onPreview,
+    this.isPreviewLoading = false,
   });
 
   @override
@@ -57,6 +63,15 @@ class FloatingActionButtonRow extends StatelessWidget {
               ),
             ],
             const Spacer(),
+            if (onPreview != null) ...[
+              _CircleButton(
+                icon: Icons.visibility_rounded,
+                tooltip: '出力プレビュー',
+                onTap: onPreview!,
+                loading: isPreviewLoading,
+              ),
+              const SizedBox(width: 8),
+            ],
             if (onSave != null)
               _CircleButton(
                 icon: Icons.download_rounded,
