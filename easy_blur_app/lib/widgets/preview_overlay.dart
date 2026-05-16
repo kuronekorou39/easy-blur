@@ -1,11 +1,11 @@
-import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../utils/theme.dart';
 
 /// 出力相当の合成画像を全画面表示するオーバーレイ。
-/// タップ or 閉じるボタンで onClose が呼ばれる。
+/// `ui.Image` を直接表示することで PNG 経由の往復を避けて高速化。
 class PreviewOverlay extends StatelessWidget {
-  final Uint8List imageBytes;
+  final ui.Image image;
   final VoidCallback onClose;
 
   /// 注釈ラベル（例: 「動画は現在フレーム」）
@@ -13,7 +13,7 @@ class PreviewOverlay extends StatelessWidget {
 
   const PreviewOverlay({
     super.key,
-    required this.imageBytes,
+    required this.image,
     required this.onClose,
     this.caption,
   });
@@ -22,7 +22,6 @@ class PreviewOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        // 背景タップで閉じる
         Positioned.fill(
           child: GestureDetector(
             onTap: onClose,
@@ -32,18 +31,13 @@ class PreviewOverlay extends StatelessWidget {
             ),
           ),
         ),
-        // 合成画像
         Center(
           child: InteractiveViewer(
             minScale: 0.5,
             maxScale: 4,
-            child: Image.memory(
-              imageBytes,
-              fit: BoxFit.contain,
-            ),
+            child: RawImage(image: image, fit: BoxFit.contain),
           ),
         ),
-        // 上部にラベル
         Positioned(
           top: 0,
           left: 0,
@@ -109,7 +103,6 @@ class PreviewOverlay extends StatelessWidget {
             ),
           ),
         ),
-        // 下部にキャプション
         if (caption != null)
           Positioned(
             bottom: 0,

@@ -133,10 +133,10 @@ class MosaicPainter extends CustomPainter {
 
     switch (layer.type) {
       case MosaicType.pixelate:
-        _drawPixelate(canvas, effectRect, state.intensity, scale);
+        _drawPixelate(canvas, effectRect, state.intensity, scale, imageDst);
         break;
       case MosaicType.blur:
-        _drawBlur(canvas, effectRect, state.intensity, imageDst);
+        _drawBlur(canvas, effectRect, state.intensity, scale, imageDst);
         break;
       case MosaicType.fill:
         canvas.drawRect(effectRect, Paint()..color = Color(layer.fillColor));
@@ -149,18 +149,41 @@ class MosaicPainter extends CustomPainter {
     canvas.restore();
   }
 
-  void _drawPixelate(
-      Canvas canvas, Rect rect, double intensity, double scale) {
+  void _drawPixelate(Canvas canvas, Rect rect, double intensity, double scale,
+      Rect imageDst) {
+    if (mediaImage == null || imageDst.isEmpty) {
+      // フォールバック: 単色グレー
+      canvas.drawRect(rect, Paint()..color = Colors.grey);
+      return;
+    }
     final blockSize = max(2.0, intensity * scale * 0.5);
-    final paint = Paint();
+    final cellsX = (rect.width / blockSize).ceil();
+    final cellsY = (rect.height / blockSize).ceil();
+    // ニアレストネイバーで 1×1 サンプリング → ブロックに拡大描画
+    final paint = Paint()..filterQuality = FilterQuality.none;
+    final imgW = mediaImage!.width.toDouble();
+    final imgH = mediaImage!.height.toDouble();
 
-    for (double y = rect.top; y < rect.bottom; y += blockSize) {
-      for (double x = rect.left; x < rect.right; x += blockSize) {
-        final bw = min(blockSize, rect.right - x);
-        final bh = min(blockSize, rect.bottom - y);
-        final hash = (x ~/ blockSize * 17 + y ~/ blockSize * 31) % 255;
-        paint.color = Color.fromARGB(180, hash ~/ 2, hash ~/ 2, hash ~/ 2);
-        canvas.drawRect(Rect.fromLTWH(x, y, bw, bh), paint);
+    for (int cy = 0; cy < cellsY; cy++) {
+      for (int cx = 0; cx < cellsX; cx++) {
+        final dx = rect.left + cx * blockSize;
+        final dy = rect.top + cy * blockSize;
+        final dw = min(blockSize, rect.right - dx);
+        final dh = min(blockSize, rect.bottom - dy);
+        // セル中心から画像内座標を逆算
+        final centerX = dx + dw / 2;
+        final centerY = dy + dh / 2;
+        final relX = (centerX - imageDst.left) / imageDst.width;
+        final relY = (centerY - imageDst.top) / imageDst.height;
+        if (relX < 0 || relX > 1 || relY < 0 || relY > 1) continue;
+        final sx = (relX * imgW).clamp(0.0, imgW - 1);
+        final sy = (relY * imgH).clamp(0.0, imgH - 1);
+        canvas.drawImageRect(
+          mediaImage!,
+          Rect.fromLTWH(sx, sy, 1, 1),
+          Rect.fromLTWH(dx, dy, dw, dh),
+          paint,
+        );
       }
     }
   }
@@ -185,8 +208,10 @@ class MosaicPainter extends CustomPainter {
   }
 
   void _drawBlur(
-      Canvas canvas, Rect rect, double intensity, Rect imageDst) {
-    final sigma = max(1.0, intensity * 0.8);
+      Canvas canvas, Rect rect, double intensity, double scale, Rect imageDst) {
+    // sigma はキャンバス座標系。pixelate/noise と同様に scale を掛けて
+    // 「画像に対する相対的なブラー量」を保存・プレビューで揃える。
+    final sigma = max(1.0, intensity * scale * 3.0);
     final paint = Paint()
       ..imageFilter = ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma);
     canvas.saveLayer(rect, paint);

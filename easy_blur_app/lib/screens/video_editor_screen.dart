@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
@@ -62,7 +61,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   Timer? _historyPushTimer;
 
   // プレビュー
-  Uint8List? _previewBytes;
+  ui.Image? _previewImage;
   bool _previewLoading = false;
 
   @override
@@ -158,6 +157,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _positionTimer?.cancel();
     _playLoadingTimeout?.cancel();
     _videoController?.dispose();
+    _previewImage?.dispose();
     super.dispose();
   }
 
@@ -655,12 +655,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           frameSize.height.round(),
         );
         picture.dispose();
-        final byteData =
-            await saved.toByteData(format: ui.ImageByteFormat.png);
-        saved.dispose();
-        if (byteData == null) throw Exception('プレビュー生成失敗');
-        if (!mounted) return;
-        setState(() => _previewBytes = byteData.buffer.asUint8List());
+        if (!mounted) {
+          saved.dispose();
+          return;
+        }
+        // 既存のプレビュー画像があれば破棄
+        _previewImage?.dispose();
+        setState(() => _previewImage = saved);
       } finally {
         frameImage.dispose();
       }
@@ -672,7 +673,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   }
 
   void _closePreview() {
-    setState(() => _previewBytes = null);
+    _previewImage?.dispose();
+    setState(() => _previewImage = null);
   }
 
   // --- 動画保存（ネイティブ Kotlin + MediaCodec でモザイクを焼き込み）---
@@ -911,9 +913,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           onPreview: _showPreview,
           isPreviewLoading: _previewLoading,
         ),
-        if (_previewBytes != null)
+        if (_previewImage != null)
           PreviewOverlay(
-            imageBytes: _previewBytes!,
+            image: _previewImage!,
             onClose: _closePreview,
             caption: '動画は現在フレームを合成（実際の出力は時間軸で適用）',
           ),

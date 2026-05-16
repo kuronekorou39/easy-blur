@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
@@ -12,9 +11,7 @@ import '../utils/project_storage.dart';
 import '../utils/theme.dart';
 import '../widgets/editor_bottom_sheet.dart';
 import '../widgets/floating_action_button_row.dart';
-import '../widgets/mosaic_effect_layer.dart';
 import '../widgets/mosaic_overlay.dart';
-import '../widgets/preview_overlay.dart';
 
 class ImageEditorScreen extends StatefulWidget {
   final EditorProject project;
@@ -33,10 +30,6 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
   bool _saving = false;
   String? _loadError;
   final GlobalKey _canvasKey = GlobalKey();
-
-  // プレビュー用
-  Uint8List? _previewBytes;
-  bool _previewLoading = false;
 
   final ProjectHistory _history = ProjectHistory();
   Timer? _historyPushTimer;
@@ -328,46 +321,6 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
     _scheduleSave();
   }
 
-  // --- プレビュー（出力相当の合成画像） ---
-
-  Future<void> _showPreview() async {
-    if (_uiImage == null || _previewLoading) return;
-    setState(() => _previewLoading = true);
-    try {
-      final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder);
-      final painter = MosaicPainter(
-        mediaImage: _uiImage,
-        layers: _project.layers,
-        currentTime: Duration.zero,
-        mediaSize: _imageSize,
-        selectedLayerIndex: null,
-        isPreview: false,
-      );
-      painter.paint(canvas, _imageSize);
-      final picture = recorder.endRecording();
-      final img = await picture.toImage(
-        _imageSize.width.round(),
-        _imageSize.height.round(),
-      );
-      picture.dispose();
-      final byteData =
-          await img.toByteData(format: ui.ImageByteFormat.png);
-      img.dispose();
-      if (byteData == null) throw Exception('プレビュー生成失敗');
-      if (!mounted) return;
-      setState(() => _previewBytes = byteData.buffer.asUint8List());
-    } catch (_) {
-      // 失敗時は無視
-    } finally {
-      if (mounted) setState(() => _previewLoading = false);
-    }
-  }
-
-  void _closePreview() {
-    setState(() => _previewBytes = null);
-  }
-
   // --- 保存 ---
 
   Future<void> _saveImage() async {
@@ -560,7 +513,8 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
             ),
           ],
         ),
-        // フローティング戻る/保存ボタン + Undo/Redo + プレビュー
+        // フローティング戻る/保存ボタン + Undo/Redo
+        // 画像はリアルタイムで保存と同じ見た目になるためプレビューボタン不要
         FloatingActionButtonRow(
           onBack: _handleBack,
           onSave: _saveImage,
@@ -569,15 +523,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
           onRedo: _redo,
           canUndo: _history.canUndo,
           canRedo: _history.canRedo,
-          onPreview: _showPreview,
-          isPreviewLoading: _previewLoading,
         ),
-        // プレビューオーバーレイ
-        if (_previewBytes != null)
-          PreviewOverlay(
-            imageBytes: _previewBytes!,
-            onClose: _closePreview,
-          ),
       ],
     );
   }
@@ -602,35 +548,25 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
           child: Stack(
             clipBehavior: Clip.hardEdge,
             children: [
-              // 画像本体のみ描画（モザイクは別レイヤーで重ねる）
-              if (_uiImage != null)
-                Positioned.fromRect(
-                  rect: imageRect,
-                  child: RepaintBoundary(
-                    key: _canvasKey,
-                    child: RawImage(
-                      image: _uiImage,
-                      fit: BoxFit.fill,
+              // 画像 + モザイク効果を MosaicPainter で一括リアルタイム描画
+              // （保存と同じ計算パスで、編集中も出力と同じ見た目）
+              Positioned.fill(
+                child: RepaintBoundary(
+                  key: _canvasKey,
+                  child: CustomPaint(
+                    painter: MosaicPainter(
+                      mediaImage: _uiImage,
+                      layers: _project.layers,
+                      currentTime: Duration.zero,
+                      mediaSize: _imageSize,
+                      selectedLayerIndex: null,
+                      isPreview: true,
                     ),
+                    size: canvasSize,
+                    child: const SizedBox.expand(),
                   ),
                 ),
-              // 各レイヤーのモザイク効果（BackdropFilter で実画像にフィルター）
-              for (int i = 0; i < _project.layers.length; i++)
-                if (_project.layers[i].visible &&
-                    _project.layers[i].keyframes.isNotEmpty)
-                  MosaicEffectLayer(
-                    key: ValueKey('effect_${_project.layers[i].id}'),
-                    canvasRect: _layerCanvasRect(
-                        _project.layers[i], imageRect, scale),
-                    type: _project.layers[i].type,
-                    shape: _project.layers[i].shape,
-                    inverted: _project.layers[i].inverted,
-                    fillColor: _project.layers[i].fillColor,
-                    intensity:
-                        _project.layers[i].keyframes.first.intensity,
-                    rotation:
-                        _project.layers[i].keyframes.first.rotation,
-                  ),
+              ),
               // 各レイヤーのオーバーレイ（選択枠・ハンドル）
               for (int i = 0; i < _project.layers.length; i++)
                 if (_project.layers[i].visible &&
