@@ -176,6 +176,7 @@ class _VideoEditorBottomSheetState extends State<VideoEditorBottomSheet> {
                       onInvertedChanged: (_) {},
                       onFillColorChanged: (_) {},
                       onRotationChanged: (_) {},
+                      onBarAngleChanged: (_) {},
                       onIntensityChanged: widget.onIntensityChanged,
                     ),
                   ),

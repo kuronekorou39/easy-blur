@@ -209,6 +209,13 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
     _scheduleSave();
   }
 
+  void _onBarAngleChanged(double radians) {
+    final layer = _project.selectedLayer;
+    if (layer == null) return;
+    setState(() => layer.barAngle = radians);
+    _scheduleSave();
+  }
+
   void _onIntensityChanged(double value) {
     final layer = _project.selectedLayer;
     if (layer == null || layer.keyframes.isEmpty) return;
@@ -504,6 +511,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
               onFillColorChanged: _onFillColorChanged,
               onIntensityChanged: _onIntensityChanged,
               onRotationChanged: _onRotationChanged,
+              onBarAngleChanged: _onBarAngleChanged,
               onSelectLayer: _selectLayer,
               onAddLayer: _addLayer,
               onDeleteLayer: _deleteLayer,

@@ -70,6 +70,7 @@ class VideoMosaicProcessor {
                 "blackout" -> MosaicType.FILL to 0xFF000000.toInt()
                 "whiteout" -> MosaicType.FILL to 0xFFFFFFFF.toInt()
                 "noise" -> MosaicType.NOISE to null
+                "bars" -> MosaicType.BARS to null
                 else -> MosaicType.PIXELATE to null
             }
             val fillColor = legacyFillColor
@@ -102,6 +103,7 @@ class VideoMosaicProcessor {
                     shape = shape,
                     inverted = obj.optBoolean("inverted", false),
                     fillColor = fillColor,
+                    barAngle = obj.optDouble("barAngle", 0.0).toFloat(),
                     startMs = obj.getLong("startMs"),
                     endMs = obj.getLong("endMs"),
                     keyframes = kfs,
@@ -112,7 +114,7 @@ class VideoMosaicProcessor {
     }
 }
 
-enum class MosaicType { PIXELATE, BLUR, FILL, NOISE }
+enum class MosaicType { PIXELATE, BLUR, FILL, NOISE, BARS }
 enum class MosaicShape { RECTANGLE, ELLIPSE, TRIANGLE, HEART }
 
 data class KeyframeParam(
@@ -130,6 +132,7 @@ data class LayerParam(
     val shape: MosaicShape,
     val inverted: Boolean,
     val fillColor: Int,
+    val barAngle: Float,
     val startMs: Long,
     val endMs: Long,
     val keyframes: List<KeyframeParam>,

@@ -21,6 +21,7 @@ class LayerPanel extends StatefulWidget {
   final ValueChanged<int> onFillColorChanged;
   final ValueChanged<double> onIntensityChanged;
   final ValueChanged<double> onRotationChanged;
+  final ValueChanged<double> onBarAngleChanged;
 
   // 動画用: 時間範囲編集
   final bool showTimeRange;
@@ -49,6 +50,7 @@ class LayerPanel extends StatefulWidget {
     required this.onFillColorChanged,
     required this.onIntensityChanged,
     required this.onRotationChanged,
+    required this.onBarAngleChanged,
     this.showTimeRange = false,
     this.currentTime,
     this.totalDuration,
@@ -234,6 +236,10 @@ class _LayerPanelState extends State<LayerPanel> {
               widget.onSelect(index);
               widget.onRotationChanged(v);
             },
+            onBarAngleChanged: (v) {
+              widget.onSelect(index);
+              widget.onBarAngleChanged(v);
+            },
             showTimeRange: widget.showTimeRange,
             currentTime: widget.currentTime,
             totalDuration: widget.totalDuration,
@@ -277,6 +283,7 @@ class _LayerTile extends StatelessWidget {
   final ValueChanged<int> onFillColorChanged;
   final ValueChanged<double> onIntensityChanged;
   final ValueChanged<double> onRotationChanged;
+  final ValueChanged<double> onBarAngleChanged;
 
   // 動画用
   final bool showTimeRange;
@@ -306,6 +313,7 @@ class _LayerTile extends StatelessWidget {
     required this.onFillColorChanged,
     required this.onIntensityChanged,
     required this.onRotationChanged,
+    required this.onBarAngleChanged,
     this.showTimeRange = false,
     this.currentTime,
     this.totalDuration,
@@ -327,6 +335,8 @@ class _LayerTile extends StatelessWidget {
         return Icons.format_color_fill_rounded;
       case MosaicType.noise:
         return Icons.grain_rounded;
+      case MosaicType.bars:
+        return Icons.view_stream_rounded;
     }
   }
 
@@ -340,6 +350,8 @@ class _LayerTile extends StatelessWidget {
         return 'バケツ';
       case MosaicType.noise:
         return 'ノイズ';
+      case MosaicType.bars:
+        return '黒のり';
     }
   }
 
@@ -543,6 +555,99 @@ class _LayerTile extends StatelessWidget {
     }
   }
 
+  /// 黒のり用：バーの角度（-90°〜+90°）
+  Widget _buildBarAngleSection() {
+    final rad = layer.barAngle;
+    final deg = (rad * 180 / 3.14159265358979).round().clamp(-90, 90);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text('バー角度', style: AppTheme.textLabel),
+            const Spacer(),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppTheme.accent.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+              ),
+              child: Text(
+                '$deg°',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.accentBright,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            GestureDetector(
+              onTap: () => onBarAngleChanged(0.0),
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppTheme.bgHover.withValues(alpha: 0.6),
+                  borderRadius:
+                      BorderRadius.circular(AppTheme.radiusSmall),
+                  border: Border.all(
+                    color: AppTheme.borderColor.withValues(alpha: 0.5),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.refresh_rounded,
+                        size: 12, color: AppTheme.textMuted),
+                    const SizedBox(width: 3),
+                    Text(
+                      'リセット',
+                      style:
+                          AppTheme.textCaption.copyWith(fontSize: 10),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+        Row(
+          children: [
+            _SliderButton(
+              icon: Icons.remove_rounded,
+              onTap: () => onBarAngleChanged(
+                ((deg - 1).clamp(-90, 90)) * 3.14159265358979 / 180,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Slider(
+                value: deg.toDouble().clamp(-90, 90),
+                min: -90,
+                max: 90,
+                divisions: 180,
+                onChanged: (v) =>
+                    onBarAngleChanged(v * 3.14159265358979 / 180),
+              ),
+            ),
+            const SizedBox(width: 4),
+            _SliderButton(
+              icon: Icons.add_rounded,
+              onTap: () => onBarAngleChanged(
+                ((deg + 1).clamp(-90, 90)) * 3.14159265358979 / 180,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _buildRotationSection(Keyframe? kf) {
     // ラジアン → 度
     final rad = kf?.rotation ?? 0.0;
@@ -724,8 +829,9 @@ class _LayerTile extends StatelessWidget {
           Text('効果', style: AppTheme.textLabel),
           const SizedBox(height: 6),
           _buildTypeGrid(),
-          // バケツ選択時のみ色プリセットを表示
-          if (layer.type == MosaicType.fill) ...[
+          // バケツ・黒のり選択時に色プリセットを表示
+          if (layer.type == MosaicType.fill ||
+              layer.type == MosaicType.bars) ...[
             const SizedBox(height: AppTheme.spaceMd),
             Row(
               children: [
@@ -746,6 +852,11 @@ class _LayerTile extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             _buildColorPalette(),
+          ],
+          // 黒のり選択時はバー角度スライダー
+          if (layer.type == MosaicType.bars) ...[
+            const SizedBox(height: AppTheme.spaceMd),
+            _buildBarAngleSection(),
           ],
           const SizedBox(height: AppTheme.spaceMd),
           // 形状ヘッダー（右端に内側/外側トグル）
@@ -877,6 +988,8 @@ class _LayerTile extends StatelessWidget {
         return 'バケツ';
       case MosaicType.noise:
         return 'ノイズ';
+      case MosaicType.bars:
+        return '黒のり';
     }
   }
 
@@ -890,6 +1003,8 @@ class _LayerTile extends StatelessWidget {
         return Icons.format_color_fill_rounded;
       case MosaicType.noise:
         return Icons.grain_rounded;
+      case MosaicType.bars:
+        return Icons.view_stream_rounded;
     }
   }
 

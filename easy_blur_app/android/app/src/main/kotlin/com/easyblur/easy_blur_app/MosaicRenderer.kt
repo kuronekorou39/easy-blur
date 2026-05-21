@@ -48,6 +48,8 @@ class MosaicRenderer(
     private var uInvertedMosaic = 0
     private var uFillColorMosaic = 0
     private var uRotationMosaic = 0
+    private var uBarAngleMosaic = 0
+    private var uBoxSizePxMosaic = 0
 
     private lateinit var vertexBuf: FloatBuffer
     private val mvpMatrix = FloatArray(16)
@@ -114,6 +116,8 @@ class MosaicRenderer(
         uInvertedMosaic = GLES20.glGetUniformLocation(mosaicProgram, "u_inverted")
         uFillColorMosaic = GLES20.glGetUniformLocation(mosaicProgram, "u_fill_color")
         uRotationMosaic = GLES20.glGetUniformLocation(mosaicProgram, "u_rotation")
+        uBarAngleMosaic = GLES20.glGetUniformLocation(mosaicProgram, "u_bar_angle")
+        uBoxSizePxMosaic = GLES20.glGetUniformLocation(mosaicProgram, "u_box_size_px")
     }
 
     /**
@@ -227,6 +231,7 @@ class MosaicRenderer(
             MosaicType.BLUR -> 1
             MosaicType.FILL -> 2
             MosaicType.NOISE -> 3
+            MosaicType.BARS -> 4
         }
         val shape = when (layer.shape) {
             MosaicShape.RECTANGLE -> 0
@@ -246,6 +251,11 @@ class MosaicRenderer(
         val b = (layer.fillColor and 0xFF) / 255f
         GLES20.glUniform4f(uFillColorMosaic, r, g, b, a)
         GLES20.glUniform1f(uRotationMosaic, kf.rotation)
+        GLES20.glUniform1f(uBarAngleMosaic, layer.barAngle)
+        // bars 用：レイヤー矩形のピクセル寸法（プレビューと角度・アスペクトを合わせるため）
+        val boxWidthPx = (u1 - u0) * w
+        val boxHeightPx = (v1 - v0) * h
+        GLES20.glUniform2f(uBoxSizePxMosaic, boxWidthPx, boxHeightPx)
 
         quadBuf.position(0)
         GLES20.glEnableVertexAttribArray(aPosMosaic)
@@ -319,6 +329,8 @@ class MosaicRenderer(
             uniform vec4 u_fill_color;
             uniform float u_intensity;
             uniform float u_rotation;
+            uniform float u_bar_angle;
+            uniform vec2 u_box_size_px;
 
             void main() {
                 // 矩形ローカル座標 (0..1)
@@ -377,6 +389,21 @@ class MosaicRenderer(
 
                 if (u_effect == 2) {
                     // 単色塗り（バケツ）
+                    gl_FragColor = u_fill_color;
+                } else if (u_effect == 4) {
+                    // 黒のり（ストライプ）。ピクセル空間で角度を扱い、プレビューと一致させる。
+                    vec2 px = (local - vec2(0.5)) * u_box_size_px;
+                    float cBA = cos(-u_bar_angle);
+                    float sBA = sin(-u_bar_angle);
+                    vec2 rot = vec2(
+                        px.x * cBA - px.y * sBA,
+                        px.x * sBA + px.y * cBA
+                    );
+                    float diag = length(u_box_size_px);
+                    float cycles = max(2.0, u_intensity);
+                    float period = diag / cycles;
+                    float pos = fract(rot.y / period + 0.5);
+                    if (pos > 0.6) discard;
                     gl_FragColor = u_fill_color;
                 } else if (u_effect == 3) {
                     // ノイズ（決定論的疑似乱数）

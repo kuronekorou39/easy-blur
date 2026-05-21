@@ -18,6 +18,7 @@ class EditorBottomSheet extends StatefulWidget {
   final ValueChanged<int> onFillColorChanged;
   final ValueChanged<double> onIntensityChanged;
   final ValueChanged<double> onRotationChanged;
+  final ValueChanged<double> onBarAngleChanged;
   final ValueChanged<int> onSelectLayer;
   final VoidCallback onAddLayer;
   final ValueChanged<int> onDeleteLayer;
@@ -47,6 +48,7 @@ class EditorBottomSheet extends StatefulWidget {
     required this.onFillColorChanged,
     required this.onIntensityChanged,
     required this.onRotationChanged,
+    required this.onBarAngleChanged,
     required this.onSelectLayer,
     required this.onAddLayer,
     required this.onDeleteLayer,
@@ -171,6 +173,7 @@ class _EditorBottomSheetState extends State<EditorBottomSheet>
                           onFillColorChanged: widget.onFillColorChanged,
                           onIntensityChanged: widget.onIntensityChanged,
                           onRotationChanged: widget.onRotationChanged,
+                          onBarAngleChanged: widget.onBarAngleChanged,
                           showTimeRange: widget.showTimeRange,
                           currentTime: widget.currentTime,
                           totalDuration: widget.totalDuration,

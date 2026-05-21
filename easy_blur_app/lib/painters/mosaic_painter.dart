@@ -144,6 +144,10 @@ class MosaicPainter extends CustomPainter {
       case MosaicType.noise:
         _drawNoise(canvas, effectRect, state.intensity, scale);
         break;
+      case MosaicType.bars:
+        _drawBars(canvas, effectRect, state.intensity, layer.fillColor,
+            layer.barAngle);
+        break;
     }
 
     canvas.restore();
@@ -205,6 +209,36 @@ class MosaicPainter extends CustomPainter {
         canvas.drawRect(Rect.fromLTWH(x, y, bw, bh), paint);
       }
     }
+  }
+
+  /// 黒のり風ストライプ。
+  /// 矩形中心を基準に barAngle 回転した座標で、垂直方向に等間隔の太いバーを描画。
+  /// intensity がバー本数（密度）。バー:隙間 ≒ 0.6:0.4。
+  void _drawBars(Canvas canvas, Rect rect, double intensity, int colorArgb,
+      double barAngle) {
+    if (rect.isEmpty) return;
+    final cycles = intensity.clamp(2.0, 60.0);
+    // 回転後でも全領域を覆えるよう、対角線長を採用
+    final diag = sqrt(rect.width * rect.width + rect.height * rect.height);
+    final period = diag / cycles;
+    final barThickness = period * 0.6;
+
+    canvas.save();
+    canvas.translate(rect.center.dx, rect.center.dy);
+    canvas.rotate(barAngle);
+
+    final paint = Paint()..color = Color(colorArgb);
+    final halfDiag = diag / 2;
+    // 中心からマイナス方向にも伸ばすため、開始位置を負側に寄せる
+    final startY = -halfDiag - period;
+    final endY = halfDiag + period;
+    for (double y = startY; y < endY; y += period) {
+      canvas.drawRect(
+        Rect.fromLTWH(-halfDiag, y, diag, barThickness),
+        paint,
+      );
+    }
+    canvas.restore();
   }
 
   void _drawBlur(

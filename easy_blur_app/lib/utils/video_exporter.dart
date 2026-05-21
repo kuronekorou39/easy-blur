@@ -95,6 +95,7 @@ class VideoExporter {
         'shape': l.shape.name,
         'inverted': l.inverted,
         'fillColor': l.fillColor,
+        'barAngle': l.barAngle,
         'startMs': l.startTime.inMilliseconds,
         'endMs': l.endTime.inMilliseconds,
         'keyframes': keyframes,

@@ -429,6 +429,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _scheduleSave();
   }
 
+  void _onBarAngleChanged(double radians) {
+    final layer = _project.selectedLayer;
+    if (layer == null) return;
+    setState(() => layer.barAngle = radians);
+    _scheduleSave();
+  }
+
   void _onIntensityChanged(double value) {
     final layer = _project.selectedLayer;
     if (layer == null) return;
@@ -622,6 +629,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             inverted: l.inverted,
             locked: l.locked,
             fillColor: l.fillColor,
+            barAngle: l.barAngle,
             startTime: l.startTime,
             endTime: l.endTime,
             keyframes: l.keyframes
@@ -852,6 +860,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       onFillColorChanged: _onFillColorChanged,
       onIntensityChanged: _onIntensityChanged,
       onRotationChanged: _onRotationChanged,
+      onBarAngleChanged: _onBarAngleChanged,
       onSelectLayer: _selectLayer,
       onAddLayer: _addLayer,
       onDeleteLayer: _deleteLayer,
@@ -994,6 +1003,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                     shape: _project.layers[i].shape,
                     inverted: _project.layers[i].inverted,
                     fillColor: _project.layers[i].fillColor,
+                    barAngle: _project.layers[i].barAngle,
                     intensity: _project.layers[i]
                         .getStateAt(_currentTime)
                         .intensity,

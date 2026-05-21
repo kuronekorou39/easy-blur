@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../models/models.dart';
@@ -21,11 +22,14 @@ class MosaicEffectLayer extends StatelessWidget {
   /// true: 矩形の外側にエフェクトを適用
   final bool inverted;
 
-  /// fill エフェクトで使用する色（ARGB値）
+  /// fill / bars エフェクトで使用する色（ARGB値）
   final int fillColor;
 
   /// レイヤーの回転（ラジアン、矩形中心基準）
   final double rotation;
+
+  /// bars エフェクト用、ストライプ角度（ラジアン）
+  final double barAngle;
 
   const MosaicEffectLayer({
     super.key,
@@ -36,6 +40,7 @@ class MosaicEffectLayer extends StatelessWidget {
     this.inverted = false,
     this.fillColor = 0xFF000000,
     this.rotation = 0,
+    this.barAngle = 0,
   });
 
   @override
@@ -121,8 +126,56 @@ class MosaicEffectLayer extends StatelessWidget {
           painter: _NoisePainter(intensity: intensity),
           child: const SizedBox.expand(),
         );
+
+      case MosaicType.bars:
+        return CustomPaint(
+          painter: _BarsPainter(
+            intensity: intensity,
+            colorArgb: fillColor,
+            angle: barAngle,
+          ),
+          child: const SizedBox.expand(),
+        );
     }
   }
+}
+
+class _BarsPainter extends CustomPainter {
+  final double intensity;
+  final int colorArgb;
+  final double angle;
+
+  _BarsPainter({
+    required this.intensity,
+    required this.colorArgb,
+    required this.angle,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final cycles = intensity.clamp(2.0, 60.0);
+    final diag = math.sqrt(size.width * size.width + size.height * size.height);
+    final period = diag / cycles;
+    final barThickness = period * 0.6;
+
+    canvas.save();
+    canvas.translate(size.width / 2, size.height / 2);
+    canvas.rotate(angle);
+
+    final paint = Paint()..color = Color(colorArgb);
+    final half = diag / 2;
+    for (double y = -half - period; y < half + period; y += period) {
+      canvas.drawRect(Rect.fromLTWH(-half, y, diag, barThickness), paint);
+    }
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _BarsPainter old) =>
+      old.intensity != intensity ||
+      old.colorArgb != colorArgb ||
+      old.angle != angle;
 }
 
 class _NoisePainter extends CustomPainter {

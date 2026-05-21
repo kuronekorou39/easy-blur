@@ -208,6 +208,8 @@ class PropertyPanel extends StatelessWidget {
         return 'バケツ';
       case MosaicType.noise:
         return 'ノイズ';
+      case MosaicType.bars:
+        return '黒のり';
     }
   }
 
@@ -221,6 +223,8 @@ class PropertyPanel extends StatelessWidget {
         return Icons.format_color_fill_rounded;
       case MosaicType.noise:
         return Icons.grain_rounded;
+      case MosaicType.bars:
+        return Icons.view_stream_rounded;
     }
   }
 

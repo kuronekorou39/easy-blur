@@ -5,6 +5,7 @@ enum MosaicType {
   blur,
   fill, // 単色塗りつぶし（旧 blackout/whiteout を統合、色は MosaicLayer.fillColor）
   noise,
+  bars, // 黒のり風ストライプ。色は fillColor、密度は intensity、角度は barAngle
 }
 
 enum MosaicShape {
@@ -94,7 +95,13 @@ class MosaicLayer {
   bool locked;
 
   /// fill エフェクトで使用する色（ARGB値）。デフォルトは黒。
+  /// bars エフェクトでも色の指定として共用する。
   int fillColor;
+
+  /// bars エフェクト用、ストライプの角度（ラジアン）。
+  /// レイヤー形状の回転とは独立して、ストライプだけを傾ける。
+  /// 0 = 水平ストライプ、π/2 = 垂直ストライプ。
+  double barAngle;
 
   /// レイヤーが表示され始める時刻（動画専用、画像では未使用）
   Duration startTime;
@@ -114,6 +121,7 @@ class MosaicLayer {
     this.inverted = false,
     this.locked = false,
     this.fillColor = 0xFF000000,
+    this.barAngle = 0.0,
     this.startTime = Duration.zero,
     this.endTime = const Duration(days: 1),
     List<Keyframe>? keyframes,
@@ -178,6 +186,7 @@ class MosaicLayer {
         'inverted': inverted,
         'locked': locked,
         'fillColor': fillColor,
+        'barAngle': barAngle,
         'startTimeMs': startTime.inMilliseconds,
         'endTimeMs': endTime.inMilliseconds,
         'keyframes': keyframes.map((k) => k.toJson()).toList(),
@@ -215,6 +224,7 @@ class MosaicLayer {
       inverted: json['inverted'] as bool? ?? false,
       locked: json['locked'] as bool? ?? false,
       fillColor: fillColor,
+      barAngle: (json['barAngle'] as num?)?.toDouble() ?? 0.0,
       startTime: Duration(
           milliseconds: (json['startTimeMs'] as num?)?.toInt() ?? 0),
       endTime: Duration(
