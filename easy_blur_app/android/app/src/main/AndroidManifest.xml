@@ -10,8 +10,10 @@
     <!-- Android 13以上での画像・動画読み込み -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <!-- GitHub Releases への更新確認用 -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <application
-        android:label="easy_blur_app"
+        android:label="Easy Blur"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

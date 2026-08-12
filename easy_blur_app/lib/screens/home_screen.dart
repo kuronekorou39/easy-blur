@@ -1,9 +1,11 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/models.dart';
 import '../utils/project_storage.dart';
 import '../utils/theme.dart';
+import '../utils/update_checker.dart';
 import 'image_editor_screen.dart';
 import 'video_editor_screen.dart';
 
@@ -20,6 +22,8 @@ class _HomeScreenState extends State<HomeScreen>
   bool _picking = false;
   List<EditorProject> _projects = [];
   bool _loadingProjects = true;
+  String _version = '';
+  ReleaseInfo? _update;
 
   @override
   void initState() {
@@ -32,6 +36,22 @@ class _HomeScreenState extends State<HomeScreen>
       _introCtrl.forward();
     });
     _loadProjects();
+    _loadVersionInfo();
+  }
+
+  Future<void> _loadVersionInfo() async {
+    final version = await UpdateChecker.currentVersion();
+    if (!mounted) return;
+    setState(() => _version = version);
+
+    final update = await UpdateChecker.checkForUpdate();
+    if (!mounted || update == null) return;
+    setState(() => _update = update);
+  }
+
+  Future<void> _openReleasePage() async {
+    final url = _update?.url ?? UpdateChecker.releasesPageUrl;
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
   @override
@@ -273,7 +293,7 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
                 const SizedBox(height: AppTheme.spaceSm),
                 Text(
-                  'プロ仕様のモザイク・ぼかしエディター',
+                  'モザイク・ぼかしエディター',
                   style: AppTheme.textBody.copyWith(
                     fontSize: 15,
                     color: AppTheme.textSecondary,
@@ -398,13 +418,57 @@ class _HomeScreenState extends State<HomeScreen>
               ),
               const SizedBox(height: AppTheme.spaceMd),
               Text(
-                'デバイス内で処理 · データは送信されません',
+                'メディアはデバイス内で処理 · 外部に送信されません',
                 style: AppTheme.textCaption.copyWith(fontSize: 11),
               ),
+              if (_version.isNotEmpty) ...[
+                const SizedBox(height: AppTheme.spaceSm),
+                _buildVersionInfo(),
+              ],
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _buildVersionInfo() {
+    final update = _update;
+    if (update == null) {
+      return Text(
+        'v$_version',
+        style: AppTheme.textCaption.copyWith(fontSize: 11),
+      );
+    }
+    return GestureDetector(
+      onTap: _openReleasePage,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppTheme.accent.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: AppTheme.accent.withValues(alpha: 0.4)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.system_update_alt_rounded,
+                size: 13, color: AppTheme.accentBright),
+            const SizedBox(width: 6),
+            Text(
+              'v$_version → v${update.version} に更新できます',
+              style: AppTheme.textCaption.copyWith(
+                fontSize: 11,
+                color: AppTheme.accentBright,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.open_in_new_rounded,
+                size: 11, color: AppTheme.accentBright),
+          ],
+        ),
+      ),
     );
   }
 }

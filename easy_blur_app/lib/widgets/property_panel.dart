@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../utils/theme.dart';
 
-/// プロ仕様のプロパティパネル
+/// レイヤーのプロパティパネル
 /// - 大きなチップ（タッチ領域確保）
 /// - 明確なセクション見出し
 /// - スライダーに数値値表示、値調整時のハプティック的な視覚効果

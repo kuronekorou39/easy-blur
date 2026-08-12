@@ -176,7 +176,7 @@ class _LayerPanelState extends State<LayerPanel> {
         shrinkWrap: !bounded,
         physics: bounded ? null : const ClampingScrollPhysics(),
         itemCount: widget.layers.length,
-        onReorder: widget.onReorder,
+        onReorderItem: widget.onReorder,
         proxyDecorator: (child, index, animation) {
           return AnimatedBuilder(
             animation: animation,

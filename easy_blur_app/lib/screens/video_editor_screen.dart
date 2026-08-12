@@ -395,7 +395,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
 
   void _reorderLayers(int oldIndex, int newIndex) {
     setState(() {
-      if (newIndex > oldIndex) newIndex--;
       _project.reorderLayer(oldIndex, newIndex);
     });
     _scheduleSave();
