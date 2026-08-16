@@ -70,6 +70,9 @@ class _LayerPanelState extends State<LayerPanel> {
   /// 展開中のレイヤーID
   final Set<String> _expandedIds = {};
 
+  /// 「タイム」タブを表示中のレイヤーID（動画のみ。含まれなければ「見た目」タブ）
+  final Set<String> _timeTabIds = {};
+
   /// 前回のレイヤーID（新規追加検出用）
   Set<String> _prevIds = {};
 
@@ -92,8 +95,19 @@ class _LayerPanelState extends State<LayerPanel> {
     final removedIds = _prevIds.difference(currentIds);
     if (removedIds.isNotEmpty) {
       _expandedIds.removeAll(removedIds);
+      _timeTabIds.removeAll(removedIds);
     }
     _prevIds = currentIds;
+  }
+
+  void _setTimeTab(String id, bool isTimeTab) {
+    setState(() {
+      if (isTimeTab) {
+        _timeTabIds.add(id);
+      } else {
+        _timeTabIds.remove(id);
+      }
+    });
   }
 
   void _toggleExpand(String id) {
@@ -207,6 +221,8 @@ class _LayerPanelState extends State<LayerPanel> {
             layer: layer,
             isSelected: isSelected,
             isExpanded: isExpanded,
+            isTimeTab: _timeTabIds.contains(layer.id),
+            onTimeTabChanged: (v) => _setTimeTab(layer.id, v),
             onTap: () => widget.onSelect(index),
             onExpandToggle: () => _toggleExpand(layer.id),
             onToggleVisibility: () => widget.onToggleVisibility(index),
@@ -272,6 +288,8 @@ class _LayerTile extends StatelessWidget {
   final MosaicLayer layer;
   final bool isSelected;
   final bool isExpanded;
+  final bool isTimeTab;
+  final ValueChanged<bool> onTimeTabChanged;
   final VoidCallback onTap;
   final VoidCallback onExpandToggle;
   final VoidCallback onToggleVisibility;
@@ -302,6 +320,8 @@ class _LayerTile extends StatelessWidget {
     required this.layer,
     required this.isSelected,
     required this.isExpanded,
+    required this.isTimeTab,
+    required this.onTimeTabChanged,
     required this.onTap,
     required this.onExpandToggle,
     required this.onToggleVisibility,
@@ -478,10 +498,45 @@ class _LayerTile extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 2),
-                        Text(
-                          '$_typeLabel · $_shapeLabel · $intensity',
-                          style: AppTheme.textCaption
-                              .copyWith(fontSize: 11),
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                '$_typeLabel · $_shapeLabel · $intensity',
+                                style: AppTheme.textCaption
+                                    .copyWith(fontSize: 11),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            // 動画: 現在時刻が表示範囲外なら明示
+                            if (showTimeRange &&
+                                currentTime != null &&
+                                !layer.isActiveAt(currentTime!)) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 5, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.warning
+                                      .withValues(alpha: 0.18),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: AppTheme.warning
+                                        .withValues(alpha: 0.5),
+                                  ),
+                                ),
+                                child: Text(
+                                  '範囲外',
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppTheme.warning,
+                                    height: 1.3,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ],
                     ),
@@ -816,6 +871,10 @@ class _LayerTile extends StatelessWidget {
   }
 
   Widget _buildExpandedProperties(Keyframe? kf) {
+    // 動画では「見た目」と「タイム」をタブで分割し、縦長になるのを防ぐ
+    final hasTimeTab =
+        showTimeRange && totalDuration != null && currentTime != null;
+    final showTimeContent = hasTimeTab && isTimeTab;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       child: Column(
@@ -826,139 +885,21 @@ class _LayerTile extends StatelessWidget {
             color: AppTheme.borderColor.withValues(alpha: 0.6),
           ),
           const SizedBox(height: AppTheme.spaceMd),
-          Text('効果', style: AppTheme.textLabel),
-          const SizedBox(height: 6),
-          _buildTypeGrid(),
-          // バケツ・黒のり選択時に色プリセットを表示
-          if (layer.type == MosaicType.fill ||
-              layer.type == MosaicType.bars) ...[
-            const SizedBox(height: AppTheme.spaceMd),
-            Row(
-              children: [
-                Text('色', style: AppTheme.textLabel),
-                const SizedBox(width: 8),
-                Container(
-                  width: 16,
-                  height: 16,
-                  decoration: BoxDecoration(
-                    color: Color(layer.fillColor),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(
-                      color: AppTheme.borderLight.withValues(alpha: 0.7),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            _buildColorPalette(),
-          ],
-          // 黒のり選択時はバー角度スライダー
-          if (layer.type == MosaicType.bars) ...[
-            const SizedBox(height: AppTheme.spaceMd),
-            _buildBarAngleSection(),
-          ],
-          const SizedBox(height: AppTheme.spaceMd),
-          // 形状ヘッダー（右端に内側/外側トグル）
-          Row(
-            children: [
-              Text('形状', style: AppTheme.textLabel),
-              const Spacer(),
-              _InvertToggle(
-                isInverted: layer.inverted,
-                onTap: () => onInvertedChanged(!layer.inverted),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              for (int i = 0; i < MosaicShape.values.length; i++) ...[
-                if (i > 0) const SizedBox(width: 6),
-                Expanded(
-                  child: _OptionChip(
-                    label: _shapeName(MosaicShape.values[i]),
-                    icon: _shapeIconOf(MosaicShape.values[i]),
-                    isSelected: layer.shape == MosaicShape.values[i],
-                    onTap: () => onShapeChanged(MosaicShape.values[i]),
-                  ),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: AppTheme.spaceMd),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text('強度', style: AppTheme.textLabel),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppTheme.accent.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                ),
-                child: Text(
-                  '${(kf?.intensity ?? 20).round()}',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.accentBright,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ),
-            ],
-          ),
-          Row(
-            children: [
-              _SliderButton(
-                icon: Icons.remove_rounded,
-                onTap: () {
-                  final cur = kf?.intensity ?? 20;
-                  onIntensityChanged((cur - 2).clamp(2, 60));
-                },
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Slider(
-                  value: (kf?.intensity ?? 20).clamp(2, 60),
-                  min: 2,
-                  max: 60,
-                  onChanged: onIntensityChanged,
-                ),
-              ),
-              const SizedBox(width: 4),
-              _SliderButton(
-                icon: Icons.add_rounded,
-                onTap: () {
-                  final cur = kf?.intensity ?? 20;
-                  onIntensityChanged((cur + 2).clamp(2, 60));
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: AppTheme.spaceMd),
-          // 回転セクション
-          _buildRotationSection(kf),
-          // 動画用: 時間範囲コントロール
-          if (showTimeRange &&
-              totalDuration != null &&
-              currentTime != null) ...[
-            const SizedBox(height: AppTheme.spaceMd),
-            Container(
-              height: 1,
-              color: AppTheme.borderColor.withValues(alpha: 0.4),
+          if (hasTimeTab) ...[
+            _PropTabSwitcher(
+              isTimeTab: isTimeTab,
+              keyframeCount: layer.keyframes.length,
+              onChanged: onTimeTabChanged,
             ),
             const SizedBox(height: AppTheme.spaceMd),
+          ],
+          if (showTimeContent)
             _TimeRangeControl(
               startTime: layer.startTime,
               endTime: _effectiveEnd(layer.endTime, totalDuration!),
               currentTime: currentTime!,
               totalDuration: totalDuration!,
-              keyframeTimes:
-                  layer.keyframes.map((k) => k.time).toList(),
+              keyframeTimes: layer.keyframes.map((k) => k.time).toList(),
               onSetStart: onSetStart,
               onSetEnd: onSetEnd,
               onSeekTo: onSeekTo,
@@ -966,10 +907,136 @@ class _LayerTile extends StatelessWidget {
               onDeleteKeyframeAtCurrent: onDeleteKeyframeAtCurrent,
               onDeleteKeyframe: onDeleteKeyframe,
               isActive: layer.isActiveAt(currentTime!),
-            ),
-          ],
+            )
+          else
+            _buildLookProperties(kf),
         ],
       ),
+    );
+  }
+
+  /// 「見た目」タブ: 効果・色・形状・強度・回転
+  Widget _buildLookProperties(Keyframe? kf) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('効果', style: AppTheme.textLabel),
+        const SizedBox(height: 6),
+        _buildTypeGrid(),
+        // バケツ・黒のり選択時に色プリセットを表示
+        if (layer.type == MosaicType.fill ||
+            layer.type == MosaicType.bars) ...[
+          const SizedBox(height: AppTheme.spaceMd),
+          Row(
+            children: [
+              Text('色', style: AppTheme.textLabel),
+              const SizedBox(width: 8),
+              Container(
+                width: 16,
+                height: 16,
+                decoration: BoxDecoration(
+                  color: Color(layer.fillColor),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(
+                    color: AppTheme.borderLight.withValues(alpha: 0.7),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          _buildColorPalette(),
+        ],
+        // 黒のり選択時はバー角度スライダー
+        if (layer.type == MosaicType.bars) ...[
+          const SizedBox(height: AppTheme.spaceMd),
+          _buildBarAngleSection(),
+        ],
+        const SizedBox(height: AppTheme.spaceMd),
+        // 形状ヘッダー（右端に内側/外側トグル）
+        Row(
+          children: [
+            Text('形状', style: AppTheme.textLabel),
+            const Spacer(),
+            _InvertToggle(
+              isInverted: layer.inverted,
+              onTap: () => onInvertedChanged(!layer.inverted),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            for (int i = 0; i < MosaicShape.values.length; i++) ...[
+              if (i > 0) const SizedBox(width: 6),
+              Expanded(
+                child: _OptionChip(
+                  label: _shapeName(MosaicShape.values[i]),
+                  icon: _shapeIconOf(MosaicShape.values[i]),
+                  isSelected: layer.shape == MosaicShape.values[i],
+                  onTap: () => onShapeChanged(MosaicShape.values[i]),
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: AppTheme.spaceMd),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text('強度', style: AppTheme.textLabel),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppTheme.accent.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+              ),
+              child: Text(
+                '${(kf?.intensity ?? 20).round()}',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.accentBright,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+          ],
+        ),
+        Row(
+          children: [
+            _SliderButton(
+              icon: Icons.remove_rounded,
+              onTap: () {
+                final cur = kf?.intensity ?? 20;
+                onIntensityChanged((cur - 2).clamp(2, 60));
+              },
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Slider(
+                value: (kf?.intensity ?? 20).clamp(2, 60),
+                min: 2,
+                max: 60,
+                onChanged: onIntensityChanged,
+              ),
+            ),
+            const SizedBox(width: 4),
+            _SliderButton(
+              icon: Icons.add_rounded,
+              onTap: () {
+                final cur = kf?.intensity ?? 20;
+                onIntensityChanged((cur + 2).clamp(2, 60));
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: AppTheme.spaceMd),
+        // 回転セクション
+        _buildRotationSection(kf),
+      ],
     );
   }
 
@@ -1079,6 +1146,141 @@ class _ExpandToggle extends StatelessWidget {
                   : AppTheme.textMuted,
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 動画専用: 展開プロパティの「見た目 / タイム」タブ切替
+class _PropTabSwitcher extends StatelessWidget {
+  final bool isTimeTab;
+  final int keyframeCount;
+  final ValueChanged<bool> onChanged;
+
+  const _PropTabSwitcher({
+    required this.isTimeTab,
+    required this.keyframeCount,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: AppTheme.bgTertiary.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall + 3),
+        border: Border.all(
+            color: AppTheme.borderColor.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _PropTabSegment(
+              icon: Icons.palette_outlined,
+              label: '見た目',
+              isSelected: !isTimeTab,
+              onTap: () => onChanged(false),
+            ),
+          ),
+          Expanded(
+            child: _PropTabSegment(
+              icon: Icons.schedule_rounded,
+              label: 'タイム',
+              badge: keyframeCount > 1 ? '$keyframeCount' : null,
+              isSelected: isTimeTab,
+              onTap: () => onChanged(true),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PropTabSegment extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String? badge;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _PropTabSegment({
+    required this.icon,
+    required this.label,
+    this.badge,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: AppTheme.animFast,
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppTheme.accent.withValues(alpha: 0.3)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+          border: Border.all(
+            color: isSelected
+                ? AppTheme.accent.withValues(alpha: 0.7)
+                : Colors.transparent,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 14,
+              color: isSelected
+                  ? AppTheme.accentBright
+                  : AppTheme.textMuted,
+            ),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight:
+                    isSelected ? FontWeight.w700 : FontWeight.w600,
+                color: isSelected
+                    ? AppTheme.textPrimary
+                    : AppTheme.textSecondary,
+              ),
+            ),
+            if (badge != null) ...[
+              const SizedBox(width: 5),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? AppTheme.accent.withValues(alpha: 0.4)
+                      : AppTheme.bgHover,
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                child: Text(
+                  badge!,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                    color: isSelected
+                        ? AppTheme.textPrimary
+                        : AppTheme.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );
