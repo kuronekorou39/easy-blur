@@ -14,6 +14,9 @@ class EditorProject {
   int selectedLayerIndex;
   Duration? videoDuration;
 
+  /// 編集時の再生速度（動画専用）。次回開いたときに復元する
+  double playbackSpeed;
+
   /// 最終更新日時
   DateTime updatedAt;
 
@@ -24,6 +27,7 @@ class EditorProject {
     List<MosaicLayer>? layers,
     this.selectedLayerIndex = -1,
     this.videoDuration,
+    this.playbackSpeed = 1.0,
     DateTime? updatedAt,
   })  : id = id ?? 'proj_${DateTime.now().microsecondsSinceEpoch}',
         layers = layers ?? [],
@@ -72,6 +76,7 @@ class EditorProject {
         'mediaPath': mediaPath,
         'mediaType': mediaType.name,
         'videoDurationMs': videoDuration?.inMilliseconds,
+        'playbackSpeed': playbackSpeed,
         'selectedLayerIndex': selectedLayerIndex,
         'updatedAt': updatedAt.millisecondsSinceEpoch,
         'layers': layers.map((l) => l.toJson()).toList(),
@@ -88,6 +93,8 @@ class EditorProject {
       videoDuration: json['videoDurationMs'] != null
           ? Duration(milliseconds: (json['videoDurationMs'] as num).toInt())
           : null,
+      playbackSpeed:
+          (json['playbackSpeed'] as num?)?.toDouble() ?? 1.0,
       selectedLayerIndex: (json['selectedLayerIndex'] as num?)?.toInt() ?? -1,
       updatedAt: DateTime.fromMillisecondsSinceEpoch(
           (json['updatedAt'] as num?)?.toInt() ??

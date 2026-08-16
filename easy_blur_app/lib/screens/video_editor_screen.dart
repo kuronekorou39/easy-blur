@@ -68,6 +68,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   void initState() {
     super.initState();
     _project = widget.project;
+    _playbackSpeed = _project.playbackSpeed;
     _history.push(_project);
     _initVideo();
   }
@@ -84,6 +85,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       if (!mounted) {
         controller.dispose();
         return;
+      }
+
+      // 前回の編集時に使っていた再生速度を復元
+      if (_playbackSpeed != 1.0) {
+        await controller.setPlaybackSpeed(_playbackSpeed);
       }
 
       // 表示サイズは aspectRatio から逆算（rotationCorrection の挙動が
@@ -224,6 +230,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     if (ctrl == null) return;
     setState(() => _playbackSpeed = speed);
     ctrl.setPlaybackSpeed(speed);
+    // 次回開いたとき復元できるよう保存（履歴には積まない）
+    _project.playbackSpeed = speed;
+    ProjectStorage.requestSave(_project);
   }
 
   void _seekTo(Duration time) {
