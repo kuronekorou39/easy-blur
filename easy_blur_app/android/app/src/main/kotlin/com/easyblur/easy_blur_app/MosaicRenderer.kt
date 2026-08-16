@@ -410,14 +410,15 @@ class MosaicRenderer(
                     float n = fract(sin(dot(v_uv * 1000.0, vec2(12.9898, 78.233))) * 43758.5453);
                     gl_FragColor = vec4(vec3(n), 1.0);
                 } else if (u_effect == 0) {
-                    // ピクセレート: サンプリングUVを量子化
-                    float cellsX = u_intensity;
-                    float cellsY = u_intensity;
-                    vec2 boxSize = vec2(u_sample_box.z - u_sample_box.x,
-                                        u_sample_box.w - u_sample_box.y);
-                    // レイヤーローカル (0..1) で量子化
-                    vec2 local = (v_uv - u_sample_box.xy) / boxSize;
-                    vec2 quantized = floor(local * cellsX) / cellsX + 0.5 / cellsX;
+                    // ピクセレート: サンプリングUVを量子化。
+                    // プレビュー(MosaicPainter)と同じく「強度 = ブロックの
+                    // ピクセルサイズ」基準にし、レイヤーの大小によらず
+                    // 同じ粗さになるようセル数を矩形サイズから求める。
+                    float blockPx = max(2.0, u_intensity * 0.5);
+                    vec2 cells = max(u_box_size_px / blockPx, vec2(1.0));
+                    // サンプリングは回転補正なしのローカル座標で行う
+                    vec2 sLocal = (v_uv - u_sample_box.xy) / boxSize;
+                    vec2 quantized = (floor(sLocal * cells) + 0.5) / cells;
                     vec2 sampleUv = u_sample_box.xy + quantized * boxSize;
                     gl_FragColor = texture2D(u_tex, sampleUv);
                 } else {

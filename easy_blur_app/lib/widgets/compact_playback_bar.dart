@@ -4,10 +4,11 @@ import '../utils/theme.dart';
 /// 動画再生コントロール（2段構成）
 ///
 /// 上段: 時刻 + プログレスバー + 総時間
-/// 下段: ◀ ⏵/⏸ ▶
+/// 下段: ◀ ⏵/⏸ ▶ + 速度
 ///   - 短タップ: 現在のスキップ間隔だけ移動
 ///   - 長押し: 0.5s / 1s / 5s / 10s / 30s からスキップ間隔を選択
 ///   - ボタンには現在の間隔（"1s" 等）を表示
+///   - 速度ボタン: タップで 0.1x〜2x を選択（onSpeedChanged 未指定なら非表示）
 class CompactPlaybackBar extends StatefulWidget {
   final bool isPlaying;
   final bool isLoading;
@@ -15,6 +16,8 @@ class CompactPlaybackBar extends StatefulWidget {
   final Duration totalDuration;
   final VoidCallback onTogglePlay;
   final ValueChanged<Duration> onSeek;
+  final double playbackSpeed;
+  final ValueChanged<double>? onSpeedChanged;
 
   const CompactPlaybackBar({
     super.key,
@@ -24,6 +27,8 @@ class CompactPlaybackBar extends StatefulWidget {
     required this.onTogglePlay,
     required this.onSeek,
     this.isLoading = false,
+    this.playbackSpeed = 1.0,
+    this.onSpeedChanged,
   });
 
   @override
@@ -36,6 +41,9 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
 
   /// 選択肢
   static const List<int> _skipOptions = [500, 1000, 5000, 10000, 30000];
+
+  /// 再生速度の選択肢
+  static const List<double> _speedOptions = [0.1, 0.2, 0.5, 1.0, 2.0];
 
   void _seekBy(int deltaMs) {
     final newMs = (widget.currentTime.inMilliseconds + deltaMs)
@@ -116,6 +124,78 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
     return '${ms ~/ 1000}s';
   }
 
+  static String _formatSpeed(double speed) {
+    if (speed == speed.roundToDouble()) {
+      return '${speed.toInt()}x';
+    }
+    return '${speed}x';
+  }
+
+  /// 速度ボタンからメニューを開く
+  Future<void> _showSpeedMenu(BuildContext buttonContext) async {
+    final renderObject = buttonContext.findRenderObject();
+    if (renderObject is! RenderBox) return;
+    final overlay =
+        Overlay.of(buttonContext).context.findRenderObject() as RenderBox?;
+    if (overlay == null) return;
+
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        renderObject.localToGlobal(Offset.zero, ancestor: overlay),
+        renderObject.localToGlobal(
+            renderObject.size.bottomRight(Offset.zero),
+            ancestor: overlay),
+      ),
+      Offset.zero & overlay.size,
+    );
+
+    final selected = await showMenu<double>(
+      context: buttonContext,
+      position: position,
+      color: AppTheme.bgElevated,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+        side: BorderSide(
+          color: AppTheme.borderLight.withValues(alpha: 0.5),
+        ),
+      ),
+      items: _speedOptions.map((speed) {
+        final isCurrent = speed == widget.playbackSpeed;
+        return PopupMenuItem<double>(
+          value: speed,
+          child: Row(
+            children: [
+              Icon(
+                isCurrent
+                    ? Icons.check_rounded
+                    : Icons.circle_outlined,
+                size: 16,
+                color: isCurrent
+                    ? AppTheme.accentBright
+                    : AppTheme.textMuted.withValues(alpha: 0.5),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                _formatSpeed(speed),
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
+                  color: isCurrent
+                      ? AppTheme.accentBright
+                      : AppTheme.textPrimary,
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+
+    if (selected != null && mounted) {
+      widget.onSpeedChanged?.call(selected);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final totalMs = widget.totalDuration.inMilliseconds.toDouble();
@@ -184,10 +264,10 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
             ],
           ),
           const SizedBox(height: 4),
-          // 下段: 戻る / 再生 / 進む
+          // 下段: 戻る / 再生 / 進む（右端に速度）
           Row(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              const Spacer(),
               _SeekButton(
                 icon: Icons.fast_rewind_rounded,
                 label: label,
@@ -207,6 +287,18 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
                 onTap: () => _seekBy(_skipMs),
                 onLongPress: _showSkipMenu,
               ),
+              Expanded(
+                child: widget.onSpeedChanged == null
+                    ? const SizedBox()
+                    : Align(
+                        alignment: Alignment.centerRight,
+                        child: _SpeedButton(
+                          label: _formatSpeed(widget.playbackSpeed),
+                          isActive: widget.playbackSpeed != 1.0,
+                          onTapMenu: _showSpeedMenu,
+                        ),
+                      ),
+              ),
             ],
           ),
         ],
@@ -223,6 +315,70 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
     }
     final f = ((d.inMilliseconds % 1000) / 100).floor();
     return '$m:${s.toString().padLeft(2, '0')}.$f';
+  }
+}
+
+/// 再生速度ボタン（タップでメニュー）。1x 以外のときはアクセント表示
+class _SpeedButton extends StatelessWidget {
+  final String label;
+  final bool isActive;
+  final void Function(BuildContext) onTapMenu;
+
+  const _SpeedButton({
+    required this.label,
+    required this.isActive,
+    required this.onTapMenu,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Builder(
+      builder: (ctx) => GestureDetector(
+        onTap: () => onTapMenu(ctx),
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 9),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: isActive
+                ? AppTheme.accent.withValues(alpha: 0.22)
+                : AppTheme.bgHover.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+            border: Border.all(
+              color: isActive
+                  ? AppTheme.accent.withValues(alpha: 0.6)
+                  : AppTheme.borderColor.withValues(alpha: 0.4),
+              width: isActive ? 1.0 : 0.5,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.speed_rounded,
+                size: 16,
+                color: isActive
+                    ? AppTheme.accentBright
+                    : AppTheme.textPrimary,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: isActive
+                      ? AppTheme.accentBright
+                      : AppTheme.textSecondary,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

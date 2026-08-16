@@ -51,6 +51,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   bool _seeking = false;
   Duration? _pendingSeek;
 
+  // 再生速度
+  double _playbackSpeed = 1.0;
+
   // 再生開始のバッファリング表示
   bool _playLoading = false;
   Duration _playStartPos = Duration.zero;
@@ -220,6 +223,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     }
   }
 
+  void _setPlaybackSpeed(double speed) {
+    final ctrl = _videoController;
+    if (ctrl == null) return;
+    setState(() => _playbackSpeed = speed);
+    ctrl.setPlaybackSpeed(speed);
+  }
+
   void _seekTo(Duration time) {
     final ctrl = _videoController;
     if (ctrl == null) return;
@@ -254,8 +264,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   void _addLayer() {
     setState(() {
       final layer = _project.addLayer();
-      // 時間範囲：現在時刻から動画の終端まで
-      layer.startTime = _currentTime;
+      // 時間範囲：デフォルトは動画全体。
+      // 途中で追加したレイヤーが他の時間帯で「反映されない」ように
+      // 見える混乱を避けるため、範囲の限定はタイムタブで明示的に行う。
+      layer.startTime = Duration.zero;
       layer.endTime = _totalDuration > Duration.zero
           ? _totalDuration
           : const Duration(days: 1);
@@ -847,6 +859,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       totalDuration: _totalDuration,
       onTogglePlay: _togglePlayPause,
       onSeek: _seekTo,
+      playbackSpeed: _playbackSpeed,
+      onSpeedChanged: _setPlaybackSpeed,
     );
 
     final bottomSheet = EditorBottomSheet(
