@@ -39,6 +39,8 @@ class EditorBottomSheet extends StatefulWidget {
   final ValueChanged<int>? onAddStylePointAtCurrent;
   final ValueChanged<int>? onDeleteStylePointAtCurrent;
   final void Function(int layerIndex, int styleIndex)? onDeleteStylePoint;
+  final void Function(int layerIndex, int pointIndex, Offset position)?
+      onSetPathPointPosition;
 
   const EditorBottomSheet({
     super.key,
@@ -70,6 +72,7 @@ class EditorBottomSheet extends StatefulWidget {
     this.onAddStylePointAtCurrent,
     this.onDeleteStylePointAtCurrent,
     this.onDeleteStylePoint,
+    this.onSetPathPointPosition,
   });
 
   @override
@@ -196,6 +199,8 @@ class _EditorBottomSheetState extends State<EditorBottomSheet>
                           onDeleteStylePointAtCurrent:
                               widget.onDeleteStylePointAtCurrent,
                           onDeleteStylePoint: widget.onDeleteStylePoint,
+                          onSetPathPointPosition:
+                              widget.onSetPathPointPosition,
                         ),
                       ),
                     SizedBox(height: bottomInset > 0 ? bottomInset : 0),

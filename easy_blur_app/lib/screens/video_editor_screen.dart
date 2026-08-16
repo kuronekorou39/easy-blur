@@ -679,6 +679,24 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _scheduleSave();
   }
 
+  /// 経路キーフレームの位置を絶対座標で設定（経路点一覧の手動調整から）
+  void _setPathPointPosition(
+      int layerIndex, int pointIndex, Offset position) {
+    if (layerIndex < 0 || layerIndex >= _project.layers.length) return;
+    final layer = _project.layers[layerIndex];
+    if (layer.locked) return;
+    if (pointIndex < 0 || pointIndex >= layer.pathKeyframes.length) {
+      return;
+    }
+    setState(() {
+      layer.pathKeyframes[pointIndex].position = Offset(
+        position.dx.clamp(0, _videoSize.width),
+        position.dy.clamp(0, _videoSize.height),
+      );
+    });
+    _scheduleSave();
+  }
+
   /// リサイズは基準（サイズ）のみを編集し、経路には触れない。
   /// 中心固定で拡大縮小されるため、追跡済みの経路が崩れない
   void _resizeLayer(
@@ -931,6 +949,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       onAddStylePointAtCurrent: _addStylePointAtCurrent,
       onDeleteStylePointAtCurrent: _deleteStylePointAtCurrent,
       onDeleteStylePoint: _deleteStylePoint,
+      onSetPathPointPosition: _setPathPointPosition,
     );
 
     return Stack(

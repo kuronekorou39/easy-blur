@@ -36,6 +36,8 @@ class LayerPanel extends StatefulWidget {
   final ValueChanged<int>? onAddStylePointAtCurrent;
   final ValueChanged<int>? onDeleteStylePointAtCurrent;
   final void Function(int layerIndex, int styleIndex)? onDeleteStylePoint;
+  final void Function(int layerIndex, int pointIndex, Offset position)?
+      onSetPathPointPosition;
 
   const LayerPanel({
     super.key,
@@ -66,6 +68,7 @@ class LayerPanel extends StatefulWidget {
     this.onAddStylePointAtCurrent,
     this.onDeleteStylePointAtCurrent,
     this.onDeleteStylePoint,
+    this.onSetPathPointPosition,
   });
 
   @override
@@ -78,6 +81,9 @@ class _LayerPanelState extends State<LayerPanel> {
 
   /// 「タイム」タブを表示中のレイヤーID（動画のみ。含まれなければ「見た目」タブ）
   final Set<String> _timeTabIds = {};
+
+  /// 経路点一覧を展開中のレイヤーID（デフォルトは閉じておく）
+  final Set<String> _pathListIds = {};
 
   /// 前回のレイヤーID（新規追加検出用）
   Set<String> _prevIds = {};
@@ -102,8 +108,19 @@ class _LayerPanelState extends State<LayerPanel> {
     if (removedIds.isNotEmpty) {
       _expandedIds.removeAll(removedIds);
       _timeTabIds.removeAll(removedIds);
+      _pathListIds.removeAll(removedIds);
     }
     _prevIds = currentIds;
+  }
+
+  void _togglePathList(String id) {
+    setState(() {
+      if (_pathListIds.contains(id)) {
+        _pathListIds.remove(id);
+      } else {
+        _pathListIds.add(id);
+      }
+    });
   }
 
   void _setTimeTab(String id, bool isTimeTab) {
@@ -293,6 +310,13 @@ class _LayerPanelState extends State<LayerPanel> {
             onDeleteStylePoint: widget.onDeleteStylePoint == null
                 ? null
                 : (sIndex) => widget.onDeleteStylePoint!(index, sIndex),
+            isPathListExpanded: _pathListIds.contains(layer.id),
+            onPathListToggle: () => _togglePathList(layer.id),
+            onSetPathPointPosition:
+                widget.onSetPathPointPosition == null
+                    ? null
+                    : (pIndex, pos) =>
+                        widget.onSetPathPointPosition!(index, pIndex, pos),
           );
         },
       ),
@@ -333,6 +357,10 @@ class _LayerTile extends StatelessWidget {
   final VoidCallback? onAddStylePointAtCurrent;
   final VoidCallback? onDeleteStylePointAtCurrent;
   final ValueChanged<int>? onDeleteStylePoint;
+  final bool isPathListExpanded;
+  final VoidCallback? onPathListToggle;
+  final void Function(int pointIndex, Offset position)?
+      onSetPathPointPosition;
 
   const _LayerTile({
     super.key,
@@ -366,6 +394,9 @@ class _LayerTile extends StatelessWidget {
     this.onAddStylePointAtCurrent,
     this.onDeleteStylePointAtCurrent,
     this.onDeleteStylePoint,
+    this.isPathListExpanded = false,
+    this.onPathListToggle,
+    this.onSetPathPointPosition,
   });
 
   IconData get _typeIcon {
@@ -925,6 +956,10 @@ class _LayerTile extends StatelessWidget {
                   layer.pathKeyframes.map((k) => k.time).toList(),
               styleTimes:
                   layer.styleKeyframes.map((s) => s.time).toList(),
+              pathPoints: layer.pathKeyframes,
+              isPathListExpanded: isPathListExpanded,
+              onPathListToggle: onPathListToggle,
+              onSetPathPointPosition: onSetPathPointPosition,
               onSetStart: onSetStart,
               onSetEnd: onSetEnd,
               onSeekTo: onSeekTo,
@@ -1323,6 +1358,13 @@ class _TimeRangeControl extends StatelessWidget {
   final Duration totalDuration;
   final List<Duration> keyframeTimes;
   final List<Duration> styleTimes;
+
+  /// 経路点の実データ（一覧の手動調整用）
+  final List<PathPoint> pathPoints;
+  final bool isPathListExpanded;
+  final VoidCallback? onPathListToggle;
+  final void Function(int pointIndex, Offset position)?
+      onSetPathPointPosition;
   final VoidCallback? onSetStart;
   final VoidCallback? onSetEnd;
   final ValueChanged<Duration>? onSeekTo;
@@ -1341,6 +1383,10 @@ class _TimeRangeControl extends StatelessWidget {
     required this.totalDuration,
     required this.keyframeTimes,
     required this.styleTimes,
+    required this.pathPoints,
+    required this.isPathListExpanded,
+    required this.onPathListToggle,
+    required this.onSetPathPointPosition,
     required this.onSetStart,
     required this.onSetEnd,
     required this.onSeekTo,
@@ -1446,6 +1492,12 @@ class _TimeRangeControl extends StatelessWidget {
           count: keyframeTimes.length,
           markerColor: AppTheme.accentBright,
           atCurrent: hasKfAtCurrent,
+          trailing: onPathListToggle == null || pathPoints.isEmpty
+              ? null
+              : _ListToggleChip(
+                  isExpanded: isPathListExpanded,
+                  onTap: onPathListToggle!,
+                ),
         ),
         const SizedBox(height: 6),
         Row(
@@ -1472,6 +1524,23 @@ class _TimeRangeControl extends StatelessWidget {
               ),
             ),
           ],
+        ),
+        // 経路点の一覧（必要なときだけ開く。座標の手動微調整用）
+        AnimatedSize(
+          duration: AppTheme.animNormal,
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: isPathListExpanded && pathPoints.isNotEmpty
+              ? Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: _PathPointList(
+                    points: pathPoints,
+                    currentTime: currentTime,
+                    onSeekTo: onSeekTo,
+                    onSetPosition: onSetPathPointPosition,
+                  ),
+                )
+              : const SizedBox(width: double.infinity, height: 0),
         ),
         const SizedBox(height: AppTheme.spaceMd),
         // 基準（サイズ・強度・回転キーフレーム）管理
@@ -1524,12 +1593,14 @@ class _TrackHeader extends StatelessWidget {
   final int count;
   final Color markerColor;
   final bool atCurrent;
+  final Widget? trailing;
 
   const _TrackHeader({
     required this.label,
     required this.count,
     required this.markerColor,
     required this.atCurrent,
+    this.trailing,
   });
 
   @override
@@ -1587,7 +1658,351 @@ class _TrackHeader extends StatelessWidget {
               ],
             ),
           ),
+        if (trailing != null) ...[
+          const SizedBox(width: 6),
+          trailing!,
+        ],
       ],
+    );
+  }
+}
+
+/// 一覧の開閉チップ（経路点リスト用）
+class _ListToggleChip extends StatelessWidget {
+  final bool isExpanded;
+  final VoidCallback onTap;
+
+  const _ListToggleChip({
+    required this.isExpanded,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: AppTheme.animFast,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: isExpanded
+              ? AppTheme.accent.withValues(alpha: 0.2)
+              : AppTheme.bgHover.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+          border: Border.all(
+            color: isExpanded
+                ? AppTheme.accent.withValues(alpha: 0.6)
+                : AppTheme.borderColor.withValues(alpha: 0.5),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.format_list_numbered_rounded,
+              size: 12,
+              color: isExpanded
+                  ? AppTheme.accentBright
+                  : AppTheme.textMuted,
+            ),
+            const SizedBox(width: 3),
+            Text(
+              '一覧',
+              style: AppTheme.textCaption.copyWith(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: isExpanded
+                    ? AppTheme.accentBright
+                    : AppTheme.textSecondary,
+              ),
+            ),
+            AnimatedRotation(
+              duration: AppTheme.animFast,
+              turns: isExpanded ? 0.5 : 0.0,
+              child: Icon(
+                Icons.expand_more_rounded,
+                size: 13,
+                color: isExpanded
+                    ? AppTheme.accentBright
+                    : AppTheme.textMuted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 経路点の一覧。各点の時刻表示・シーク・X/Y の手動調整
+class _PathPointList extends StatelessWidget {
+  final List<PathPoint> points;
+  final Duration currentTime;
+  final ValueChanged<Duration>? onSeekTo;
+  final void Function(int index, Offset position)? onSetPosition;
+
+  const _PathPointList({
+    required this.points,
+    required this.currentTime,
+    required this.onSeekTo,
+    required this.onSetPosition,
+  });
+
+  static String _fmtTime(Duration d) {
+    final m = d.inMinutes;
+    final s = d.inSeconds % 60;
+    final f = (d.inMilliseconds % 1000) ~/ 100;
+    return '$m:${s.toString().padLeft(2, '0')}.$f';
+  }
+
+  /// 現在時刻に最も近い点（150ms以内）を強調表示する
+  int _activeIndex() {
+    for (int i = 0; i < points.length; i++) {
+      if ((points[i].time.inMilliseconds - currentTime.inMilliseconds)
+              .abs() <=
+          150) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  Future<void> _editValue(
+    BuildContext context, {
+    required int index,
+    required bool isX,
+  }) async {
+    final point = points[index];
+    final current = isX ? point.position.dx : point.position.dy;
+    final controller =
+        TextEditingController(text: current.round().toString());
+    final entered = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgElevated,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+        ),
+        title: Text('${isX ? 'X' : 'Y'} 座標を入力'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          style: AppTheme.textBody,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: AppTheme.bgTertiary,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('キャンセル'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(ctx).pop(double.tryParse(controller.text)),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.accent,
+            ),
+            child: const Text('設定'),
+          ),
+        ],
+      ),
+    );
+    if (entered != null) {
+      final pos = point.position;
+      onSetPosition?.call(
+        index,
+        isX ? Offset(entered, pos.dy) : Offset(pos.dx, entered),
+      );
+    }
+  }
+
+  void _nudge(int index, bool isX, double delta) {
+    final pos = points[index].position;
+    onSetPosition?.call(
+      index,
+      isX
+          ? Offset(pos.dx + delta, pos.dy)
+          : Offset(pos.dx, pos.dy + delta),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final active = _activeIndex();
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.bgTertiary.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+        border: Border.all(
+            color: AppTheme.borderColor.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        children: [
+          for (int i = 0; i < points.length; i++) ...[
+            if (i > 0)
+              Container(
+                height: 1,
+                color: AppTheme.borderColor.withValues(alpha: 0.25),
+              ),
+            _buildRow(context, i, isActive: i == active),
+          ],
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
+            child: Text(
+              '時刻タップでシーク、± で1ずつ（長押しで10ずつ）、数値タップで直接入力',
+              style: AppTheme.textCaption.copyWith(fontSize: 9),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRow(BuildContext context, int index,
+      {required bool isActive}) {
+    final point = points[index];
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: isActive
+            ? AppTheme.accent.withValues(alpha: 0.12)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+      ),
+      child: Row(
+        children: [
+          // 時刻（タップでシーク）
+          GestureDetector(
+            onTap:
+                onSeekTo == null ? null : () => onSeekTo!(point.time),
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              width: 56,
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: isActive
+                          ? AppTheme.accentBright
+                          : AppTheme.textMuted.withValues(alpha: 0.6),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    _fmtTime(point.time),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight:
+                          isActive ? FontWeight.w700 : FontWeight.w600,
+                      color: isActive
+                          ? AppTheme.accentBright
+                          : AppTheme.textSecondary,
+                      fontFeatures: const [
+                        FontFeature.tabularFigures()
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const Spacer(),
+          _buildAxisCluster(context, index, isX: true),
+          const SizedBox(width: 8),
+          _buildAxisCluster(context, index, isX: false),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAxisCluster(BuildContext context, int index,
+      {required bool isX}) {
+    final point = points[index];
+    final value = isX ? point.position.dx : point.position.dy;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          isX ? 'X' : 'Y',
+          style: AppTheme.textCaption.copyWith(fontSize: 9),
+        ),
+        const SizedBox(width: 3),
+        _NudgeButton(
+          icon: Icons.remove_rounded,
+          onTap: () => _nudge(index, isX, -1),
+          onLongPress: () => _nudge(index, isX, -10),
+        ),
+        GestureDetector(
+          onTap: onSetPosition == null
+              ? null
+              : () => _editValue(context, index: index, isX: isX),
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            width: 40,
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            alignment: Alignment.center,
+            child: Text(
+              '${value.round()}',
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.textPrimary,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ),
+        _NudgeButton(
+          icon: Icons.add_rounded,
+          onTap: () => _nudge(index, isX, 1),
+          onLongPress: () => _nudge(index, isX, 10),
+        ),
+      ],
+    );
+  }
+}
+
+/// 経路点一覧の ± ボタン（タップ±1、長押し±10）
+class _NudgeButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  const _NudgeButton({
+    required this.icon,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        width: 26,
+        height: 26,
+        decoration: BoxDecoration(
+          color: AppTheme.bgHover.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+              color: AppTheme.borderColor.withValues(alpha: 0.4)),
+        ),
+        child: Icon(icon, size: 14, color: AppTheme.textSecondary),
+      ),
     );
   }
 }
