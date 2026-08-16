@@ -49,6 +49,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   bool _seeking = false;
   Duration? _pendingSeek;
 
+  // スクラブ（スライダードラッグ）中は一時停止し、離したら再開する
+  bool _scrubbing = false;
+  bool _resumeAfterScrub = false;
+
   // 再生速度
   double _playbackSpeed = 1.0;
 
@@ -199,6 +203,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     final ctrl = _videoController;
     if (ctrl == null) return;
     _playLoadingTimeout?.cancel();
+    _resumeAfterScrub = false; // 手動操作が最優先
     if (ctrl.value.isPlaying) {
       ctrl.pause();
       setState(() {
@@ -261,7 +266,36 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       }
     } finally {
       _seeking = false;
+      _maybeResumeAfterScrub();
     }
+  }
+
+  /// スクラブ開始: 再生中なら一時停止（重いシークと再生の競合を防ぐ）
+  void _onScrubStart() {
+    _scrubbing = true;
+    final ctrl = _videoController;
+    if (ctrl == null) return;
+    if (ctrl.value.isPlaying) {
+      _resumeAfterScrub = true;
+      ctrl.pause();
+      setState(() => _playing = false);
+    }
+  }
+
+  /// スクラブ終了: 残っているシークが完了してから再生を再開する
+  void _onScrubEnd() {
+    _scrubbing = false;
+    _maybeResumeAfterScrub();
+  }
+
+  void _maybeResumeAfterScrub() {
+    if (!_resumeAfterScrub || _scrubbing) return;
+    if (_seeking || _pendingSeek != null) return;
+    _resumeAfterScrub = false;
+    final ctrl = _videoController;
+    if (ctrl == null || !mounted) return;
+    ctrl.play();
+    setState(() => _playing = true);
   }
 
   // --- レイヤー管理 ---
@@ -864,6 +898,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       onSeek: _seekTo,
       playbackSpeed: _playbackSpeed,
       onSpeedChanged: _setPlaybackSpeed,
+      onScrubStart: _onScrubStart,
+      onScrubEnd: _onScrubEnd,
     );
 
     final bottomSheet = EditorBottomSheet(
@@ -967,6 +1003,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             onTogglePlay: _togglePlayPause,
             onSeek: _seekTo,
             onSpeedChanged: _setPlaybackSpeed,
+            onScrubStart: _onScrubStart,
+            onScrubEnd: _onScrubEnd,
             onClose: _closePreview,
           ),
       ],

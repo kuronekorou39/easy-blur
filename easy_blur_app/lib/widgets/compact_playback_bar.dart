@@ -22,6 +22,11 @@ class CompactPlaybackBar extends StatefulWidget {
   final double playbackSpeed;
   final ValueChanged<double>? onSpeedChanged;
 
+  /// スライダーのドラッグ開始/終了。再生中のシークを軽くするため、
+  /// 掴んでいる間は呼び出し側で一時停止し、離したら再開する
+  final VoidCallback? onScrubStart;
+  final VoidCallback? onScrubEnd;
+
   const CompactPlaybackBar({
     super.key,
     required this.isPlaying,
@@ -32,6 +37,8 @@ class CompactPlaybackBar extends StatefulWidget {
     this.isLoading = false,
     this.playbackSpeed = 1.0,
     this.onSpeedChanged,
+    this.onScrubStart,
+    this.onScrubEnd,
   });
 
   @override
@@ -244,6 +251,7 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
                   child: Slider(
                     value: progress,
                     onChangeStart: (_) {
+                      widget.onScrubStart?.call();
                       if (_zoom > 1.0) {
                         setState(() {
                           _dragWinStartMs = winStartMs;
@@ -257,6 +265,7 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
                               (winStartMs + v * winLenMs).round()));
                     },
                     onChangeEnd: (_) {
+                      widget.onScrubEnd?.call();
                       if (_dragWinStartMs != null) {
                         setState(() {
                           _dragWinStartMs = null;

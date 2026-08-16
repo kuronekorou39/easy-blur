@@ -19,6 +19,8 @@ class VideoPreviewOverlay extends StatelessWidget {
   final VoidCallback onTogglePlay;
   final ValueChanged<Duration> onSeek;
   final ValueChanged<double> onSpeedChanged;
+  final VoidCallback? onScrubStart;
+  final VoidCallback? onScrubEnd;
   final VoidCallback onClose;
 
   const VideoPreviewOverlay({
@@ -34,6 +36,8 @@ class VideoPreviewOverlay extends StatelessWidget {
     required this.onTogglePlay,
     required this.onSeek,
     required this.onSpeedChanged,
+    this.onScrubStart,
+    this.onScrubEnd,
     required this.onClose,
   });
 
@@ -57,6 +61,8 @@ class VideoPreviewOverlay extends StatelessWidget {
               onSeek: onSeek,
               playbackSpeed: playbackSpeed,
               onSpeedChanged: onSpeedChanged,
+              onScrubStart: onScrubStart,
+              onScrubEnd: onScrubEnd,
             ),
             SizedBox(height: padding.bottom),
           ],
