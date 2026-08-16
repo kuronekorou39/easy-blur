@@ -57,7 +57,7 @@ class MosaicPainter extends CustomPainter {
 
     for (int i = 0; i < layers.length; i++) {
       final layer = layers[i];
-      if (!layer.visible || layer.keyframes.isEmpty) continue;
+      if (!layer.visible || !layer.hasContent) continue;
 
       final state = layer.getStateAt(currentTime);
       _drawMosaicRegion(
@@ -76,7 +76,7 @@ class MosaicPainter extends CustomPainter {
     for (int i = 0; i < layers.length; i++) {
       if (i != selectedLayerIndex) continue;
       final layer = layers[i];
-      if (!layer.visible || layer.keyframes.isEmpty) continue;
+      if (!layer.visible || !layer.hasContent) continue;
       final state = layer.getStateAt(currentTime);
       final cx = dst.left + state.position.dx * scale;
       final cy = dst.top + state.position.dy * scale;
@@ -98,7 +98,7 @@ class MosaicPainter extends CustomPainter {
     Rect imageDst,
     double scale,
     MosaicLayer layer,
-    Keyframe state, {
+    LayerState state, {
     bool isSelected = false,
   }) {
     final cx = imageDst.left + state.position.dx * scale;
@@ -264,7 +264,7 @@ class MosaicPainter extends CustomPainter {
   void _drawSelection(
     Canvas canvas,
     Rect rect,
-    Keyframe state,
+    LayerState state,
     double cx,
     double cy,
   ) {

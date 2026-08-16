@@ -14,6 +14,7 @@ import '../widgets/editor_bottom_sheet.dart';
 import '../widgets/floating_action_button_row.dart';
 import '../widgets/mosaic_effect_layer.dart';
 import '../widgets/mosaic_overlay.dart';
+import '../widgets/path_edit_overlay.dart';
 import '../widgets/video_preview_overlay.dart';
 import '../widgets/view_mode_toggle.dart';
 
@@ -266,9 +267,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       layer.endTime = _totalDuration > Duration.zero
           ? _totalDuration
           : const Duration(days: 1);
-      layer.addKeyframe(Keyframe(
+      layer.addPathKeyframe(PathPoint(
         time: _currentTime,
         position: Offset(_videoSize.width / 2, _videoSize.height / 2),
+      ));
+      layer.addStyleKeyframe(StylePoint(
+        time: _currentTime,
         size: Size(_videoSize.width * 0.35, _videoSize.height * 0.22),
         intensity: 20,
       ));
@@ -301,24 +305,77 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _scheduleSave();
   }
 
-  /// 現在時刻にキーフレームを追加（既にある場合は何もしない）
+  /// 現在時刻に経路キーフレームを追加（既にある場合は何もしない）
   void _addKeyframeAtCurrent(int layerIndex) {
     if (layerIndex < 0 || layerIndex >= _project.layers.length) return;
     final layer = _project.layers[layerIndex];
-    if (layer.keyframes.isEmpty) return;
+    if (layer.pathKeyframes.isEmpty) return;
     // 既に近い時刻にキーフレームがあれば何もしない
     const toleranceMs = 100;
-    for (final kf in layer.keyframes) {
+    for (final kf in layer.pathKeyframes) {
       if ((kf.time.inMilliseconds - _currentTime.inMilliseconds).abs() <=
           toleranceMs) {
         return;
       }
     }
     setState(() {
-      final state = layer.getStateAt(_currentTime);
-      layer.addKeyframe(Keyframe(
+      layer.addPathKeyframe(PathPoint(
         time: _currentTime,
-        position: state.position,
+        position: layer.positionAt(_currentTime),
+      ));
+    });
+    _scheduleSave();
+  }
+
+  /// 指定した経路キーフレームを削除（ただし最後の1つは削除できない）
+  void _deleteKeyframe(int layerIndex, int keyframeIndex) {
+    if (layerIndex < 0 || layerIndex >= _project.layers.length) return;
+    final layer = _project.layers[layerIndex];
+    if (keyframeIndex < 0 ||
+        keyframeIndex >= layer.pathKeyframes.length) {
+      return;
+    }
+    if (layer.pathKeyframes.length <= 1) return; // 最後の1つは消せない
+    setState(() {
+      layer.removePathKeyframeAt(keyframeIndex);
+    });
+    _scheduleSave();
+  }
+
+  /// 現在時刻の経路キーフレームを削除
+  void _deleteKeyframeAtCurrent(int layerIndex) {
+    if (layerIndex < 0 || layerIndex >= _project.layers.length) return;
+    final layer = _project.layers[layerIndex];
+    if (layer.pathKeyframes.length <= 1) return;
+    const toleranceMs = 150;
+    for (int i = 0; i < layer.pathKeyframes.length; i++) {
+      if ((layer.pathKeyframes[i].time.inMilliseconds -
+                  _currentTime.inMilliseconds)
+              .abs() <=
+          toleranceMs) {
+        setState(() => layer.removePathKeyframeAt(i));
+        _scheduleSave();
+        return;
+      }
+    }
+  }
+
+  /// 現在時刻に基準（サイズ・強度・回転）を追加（既にある場合は何もしない）
+  void _addStylePointAtCurrent(int layerIndex) {
+    if (layerIndex < 0 || layerIndex >= _project.layers.length) return;
+    final layer = _project.layers[layerIndex];
+    if (layer.styleKeyframes.isEmpty) return;
+    const toleranceMs = 100;
+    for (final s in layer.styleKeyframes) {
+      if ((s.time.inMilliseconds - _currentTime.inMilliseconds).abs() <=
+          toleranceMs) {
+        return;
+      }
+    }
+    setState(() {
+      final state = layer.getStateAt(_currentTime);
+      layer.addStyleKeyframe(StylePoint(
+        time: _currentTime,
         size: state.size,
         rotation: state.rotation,
         intensity: state.intensity,
@@ -327,30 +384,32 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _scheduleSave();
   }
 
-  /// 指定したキーフレームを削除（ただし最後の1つは削除できない）
-  void _deleteKeyframe(int layerIndex, int keyframeIndex) {
+  /// 指定した基準を削除（最後の1つは削除できない）
+  void _deleteStylePoint(int layerIndex, int styleIndex) {
     if (layerIndex < 0 || layerIndex >= _project.layers.length) return;
     final layer = _project.layers[layerIndex];
-    if (keyframeIndex < 0 || keyframeIndex >= layer.keyframes.length) return;
-    if (layer.keyframes.length <= 1) return; // 最後の1つは消せない
+    if (styleIndex < 0 || styleIndex >= layer.styleKeyframes.length) {
+      return;
+    }
+    if (layer.styleKeyframes.length <= 1) return;
     setState(() {
-      layer.removeKeyframeAt(keyframeIndex);
+      layer.removeStyleKeyframeAt(styleIndex);
     });
     _scheduleSave();
   }
 
-  /// 現在時刻のキーフレームを削除
-  void _deleteKeyframeAtCurrent(int layerIndex) {
+  /// 現在時刻の基準を削除
+  void _deleteStylePointAtCurrent(int layerIndex) {
     if (layerIndex < 0 || layerIndex >= _project.layers.length) return;
     final layer = _project.layers[layerIndex];
-    if (layer.keyframes.length <= 1) return;
+    if (layer.styleKeyframes.length <= 1) return;
     const toleranceMs = 150;
-    for (int i = 0; i < layer.keyframes.length; i++) {
-      if ((layer.keyframes[i].time.inMilliseconds -
+    for (int i = 0; i < layer.styleKeyframes.length; i++) {
+      if ((layer.styleKeyframes[i].time.inMilliseconds -
                   _currentTime.inMilliseconds)
               .abs() <=
           toleranceMs) {
-        setState(() => layer.removeKeyframeAt(i));
+        setState(() => layer.removeStyleKeyframeAt(i));
         _scheduleSave();
         return;
       }
@@ -444,32 +503,18 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
 
   void _onIntensityChanged(double value) {
     final layer = _project.selectedLayer;
-    if (layer == null) return;
-    // 全キーフレームに適用（動画全体で強度は統一）
+    if (layer == null || layer.styleKeyframes.isEmpty) return;
     setState(() {
-      for (final kf in layer.keyframes) {
-        kf.intensity = value;
-      }
-      if (layer.keyframes.isEmpty) {
-        layer.addKeyframe(Keyframe(
-          time: _currentTime,
-          position: Offset(_videoSize.width / 2, _videoSize.height / 2),
-          size: Size(_videoSize.width * 0.35, _videoSize.height * 0.22),
-          intensity: value,
-        ));
-      }
+      _getOrCreateStylePointAt(layer, _currentTime).intensity = value;
     });
     _scheduleSave();
   }
 
   void _onRotationChanged(double radians) {
     final layer = _project.selectedLayer;
-    if (layer == null) return;
-    // 全キーフレームに適用（動画全体で回転は統一）
+    if (layer == null || layer.styleKeyframes.isEmpty) return;
     setState(() {
-      for (final kf in layer.keyframes) {
-        kf.rotation = radians;
-      }
+      _getOrCreateStylePointAt(layer, _currentTime).rotation = radians;
     });
     _scheduleSave();
   }
@@ -492,8 +537,17 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     return Rect.fromLTWH(left, top, imgW, imgH);
   }
 
+  /// 経路表示の対象レイヤー（選択中・表示中・経路が2点以上）
+  MosaicLayer? get _selectedPathLayer {
+    final idx = _project.selectedLayerIndex;
+    if (idx < 0 || idx >= _project.layers.length) return null;
+    final layer = _project.layers[idx];
+    if (!layer.visible || layer.pathKeyframes.length < 2) return null;
+    return layer;
+  }
+
   Rect _layerCanvasRect(MosaicLayer layer, Rect videoRect, double scale) {
-    if (layer.keyframes.isEmpty) return Rect.zero;
+    if (!layer.hasContent) return Rect.zero;
     final state = layer.getStateAt(_currentTime);
     final cx = videoRect.left + state.position.dx * scale;
     final cy = videoRect.top + state.position.dy * scale;
@@ -502,34 +556,57 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     return Rect.fromCenter(center: Offset(cx, cy), width: w, height: h);
   }
 
-  /// 現在時刻に対応するキーフレームを取得または作成
-  Keyframe _getOrCreateKeyframeAt(MosaicLayer layer, Duration time) {
+  /// 現在時刻に対応する経路キーフレームを取得または作成
+  PathPoint _getOrCreatePathPointAt(MosaicLayer layer, Duration time) {
     const toleranceMs = 200; // この時間内のキーフレームを同一とみなす
-    for (final kf in layer.keyframes) {
+    for (final kf in layer.pathKeyframes) {
       if ((kf.time.inMilliseconds - time.inMilliseconds).abs() <=
           toleranceMs) {
         return kf;
       }
     }
-    // 新規作成
+    final newKf = PathPoint(time: time, position: layer.positionAt(time));
+    layer.addPathKeyframe(newKf);
+    return newKf;
+  }
+
+  /// 現在時刻に対応する基準を取得または作成。
+  /// 基準が1つだけのときは常にそれを編集する（レイヤー全体で共通の扱い）。
+  /// 基準を時間変化させたい場合はタイムタブから明示的に追加する
+  StylePoint _getOrCreateStylePointAt(MosaicLayer layer, Duration time) {
+    if (layer.styleKeyframes.length <= 1) {
+      if (layer.styleKeyframes.isEmpty) {
+        layer.addStyleKeyframe(StylePoint(
+          time: time,
+          size: Size(_videoSize.width * 0.35, _videoSize.height * 0.22),
+        ));
+      }
+      return layer.styleKeyframes.first;
+    }
+    const toleranceMs = 200;
+    for (final s in layer.styleKeyframes) {
+      if ((s.time.inMilliseconds - time.inMilliseconds).abs() <=
+          toleranceMs) {
+        return s;
+      }
+    }
     final state = layer.getStateAt(time);
-    final newKf = Keyframe(
+    final newPoint = StylePoint(
       time: time,
-      position: state.position,
       size: state.size,
       rotation: state.rotation,
       intensity: state.intensity,
     );
-    layer.addKeyframe(newKf);
-    return newKf;
+    layer.addStyleKeyframe(newPoint);
+    return newPoint;
   }
 
   void _moveLayer(int index, Offset canvasDelta, double scale) {
     if (index < 0 || index >= _project.layers.length) return;
     final layer = _project.layers[index];
-    if (layer.locked || layer.keyframes.isEmpty) return;
+    if (layer.locked || layer.pathKeyframes.isEmpty) return;
     setState(() {
-      final kf = _getOrCreateKeyframeAt(layer, _currentTime);
+      final kf = _getOrCreatePathPointAt(layer, _currentTime);
       kf.position = Offset(
         (kf.position.dx + canvasDelta.dx / scale)
             .clamp(0, _videoSize.width),
@@ -540,11 +617,32 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _scheduleSave();
   }
 
+  /// 指定した経路キーフレームを直接動かす（経路編集オーバーレイから）
+  void _movePathPoint(
+      int layerIndex, int pointIndex, Offset canvasDelta, double scale) {
+    if (layerIndex < 0 || layerIndex >= _project.layers.length) return;
+    final layer = _project.layers[layerIndex];
+    if (layer.locked) return;
+    if (pointIndex < 0 || pointIndex >= layer.pathKeyframes.length) return;
+    setState(() {
+      final kf = layer.pathKeyframes[pointIndex];
+      kf.position = Offset(
+        (kf.position.dx + canvasDelta.dx / scale)
+            .clamp(0, _videoSize.width),
+        (kf.position.dy + canvasDelta.dy / scale)
+            .clamp(0, _videoSize.height),
+      );
+    });
+    _scheduleSave();
+  }
+
+  /// リサイズは基準（サイズ）のみを編集し、経路には触れない。
+  /// 中心固定で拡大縮小されるため、追跡済みの経路が崩れない
   void _resizeLayer(
       int index, Offset canvasDelta, HandleCorner corner, double scale) {
     if (index < 0 || index >= _project.layers.length) return;
     final layer = _project.layers[index];
-    if (layer.locked || layer.keyframes.isEmpty) return;
+    if (layer.locked || !layer.hasContent) return;
 
     final imgDx = canvasDelta.dx / scale;
     final imgDy = canvasDelta.dy / scale;
@@ -570,18 +668,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     }
 
     setState(() {
-      final kf = _getOrCreateKeyframeAt(layer, _currentTime);
-      final newW = (kf.size.width + imgDx * widthSign)
+      final style = _getOrCreateStylePointAt(layer, _currentTime);
+      // 中心固定なのでドラッグ量は2倍でサイズに反映（ハンドル追従）
+      final newW = (style.size.width + imgDx * widthSign * 2)
           .clamp(20.0, _videoSize.width);
-      final newH = (kf.size.height + imgDy * heightSign)
+      final newH = (style.size.height + imgDy * heightSign * 2)
           .clamp(20.0, _videoSize.height);
-      final actualDw = newW - kf.size.width;
-      final actualDh = newH - kf.size.height;
-      kf.size = Size(newW, newH);
-      kf.position = Offset(
-        kf.position.dx + (actualDw * widthSign) / 2,
-        kf.position.dy + (actualDh * heightSign) / 2,
-      );
+      style.size = Size(newW, newH);
     });
     _scheduleSave();
   }
@@ -790,6 +883,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       onAddKeyframeAtCurrent: _addKeyframeAtCurrent,
       onDeleteKeyframeAtCurrent: _deleteKeyframeAtCurrent,
       onDeleteKeyframe: _deleteKeyframe,
+      onAddStylePointAtCurrent: _addStylePointAtCurrent,
+      onDeleteStylePointAtCurrent: _deleteStylePointAtCurrent,
+      onDeleteStylePoint: _deleteStylePoint,
     );
 
     return Stack(
@@ -916,7 +1012,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
               // モザイク効果（BackdropFilter で実フレームにフィルター適用）
               for (int i = 0; i < _project.layers.length; i++)
                 if (_project.layers[i].visible &&
-                    _project.layers[i].keyframes.isNotEmpty &&
+                    _project.layers[i].hasContent &&
                     _project.layers[i].isActiveAt(_currentTime))
                   MosaicEffectLayer(
                     key: ValueKey(
@@ -938,7 +1034,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
               if (!_saving)
                 for (int i = 0; i < _project.layers.length; i++)
                   if (_project.layers[i].visible &&
-                      _project.layers[i].keyframes.isNotEmpty &&
+                      _project.layers[i].hasContent &&
                       _project.layers[i].isActiveAt(_currentTime))
                     MosaicOverlay(
                       key: ValueKey(
@@ -952,6 +1048,20 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                       onResize: (delta, corner) =>
                           _resizeLayer(i, delta, corner, scale),
                     ),
+              // 選択中レイヤーの移動経路（前後の経路を表示・点をドラッグで修正）
+              if (!_saving && _selectedPathLayer != null)
+                PathEditOverlay(
+                  key: ValueKey('path_${_selectedPathLayer!.id}'),
+                  pathKeyframes: _selectedPathLayer!.pathKeyframes,
+                  videoRect: videoRect,
+                  scale: scale,
+                  currentTime: _currentTime,
+                  enabled: !_selectedPathLayer!.locked,
+                  onMovePoint: (i, delta) => _movePathPoint(
+                      _project.selectedLayerIndex, i, delta, scale),
+                  onTapPoint: (i) => _seekTo(
+                      _selectedPathLayer!.pathKeyframes[i].time),
+                ),
               if (_saving)
                 Positioned.fill(
                   child: Container(

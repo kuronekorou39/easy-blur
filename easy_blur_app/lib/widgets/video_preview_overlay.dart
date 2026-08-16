@@ -154,7 +154,7 @@ class VideoPreviewOverlay extends StatelessWidget {
               ),
               for (final layer in layers)
                 if (layer.visible &&
-                    layer.keyframes.isNotEmpty &&
+                    layer.hasContent &&
                     layer.isActiveAt(currentTime))
                   _buildEffectLayer(layer, videoRect, scale),
             ],

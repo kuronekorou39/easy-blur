@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/services.dart';
@@ -76,19 +77,26 @@ class VideoExporter {
       List<MosaicLayer> layers, Size videoSize) {
     final list = <Map<String, dynamic>>[];
     for (final l in layers) {
-      if (!l.visible || l.keyframes.isEmpty) continue;
+      if (!l.visible || !l.hasContent) continue;
 
-      final keyframes = l.keyframes
-          .map((kf) => {
-                'timeMs': kf.time.inMilliseconds,
-                'cx': kf.position.dx,
-                'cy': kf.position.dy,
-                'w': kf.size.width,
-                'h': kf.size.height,
-                'intensity': kf.intensity,
-                'rotation': kf.rotation,
-              })
-          .toList();
+      // 経路と基準は独立トラックだが、両者とも線形補間なので
+      // 全キーフレーム時刻の合算点で状態を焼き込めば、ネイティブ側の
+      // 従来形式（統合キーフレーム）でも完全に同じ補間結果になる
+      final timesMs = SplayTreeSet<int>()
+        ..addAll(l.pathKeyframes.map((p) => p.time.inMilliseconds))
+        ..addAll(l.styleKeyframes.map((s) => s.time.inMilliseconds));
+      final keyframes = timesMs.map((ms) {
+        final state = l.getStateAt(Duration(milliseconds: ms));
+        return {
+          'timeMs': ms,
+          'cx': state.position.dx,
+          'cy': state.position.dy,
+          'w': state.size.width,
+          'h': state.size.height,
+          'intensity': state.intensity,
+          'rotation': state.rotation,
+        };
+      }).toList();
 
       list.add({
         'type': l.type.name,

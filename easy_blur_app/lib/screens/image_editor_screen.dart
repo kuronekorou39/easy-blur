@@ -120,9 +120,12 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
   void _addLayer() {
     setState(() {
       final layer = _project.addLayer();
-      layer.addKeyframe(Keyframe(
+      layer.addPathKeyframe(PathPoint(
         time: Duration.zero,
         position: Offset(_imageSize.width / 2, _imageSize.height / 2),
+      ));
+      layer.addStyleKeyframe(StylePoint(
+        time: Duration.zero,
         size: Size(_imageSize.width * 0.35, _imageSize.height * 0.22),
         intensity: 20,
       ));
@@ -217,15 +220,15 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
 
   void _onIntensityChanged(double value) {
     final layer = _project.selectedLayer;
-    if (layer == null || layer.keyframes.isEmpty) return;
-    setState(() => layer.keyframes.first.intensity = value);
+    if (layer == null || layer.styleKeyframes.isEmpty) return;
+    setState(() => layer.styleKeyframes.first.intensity = value);
     _scheduleSave();
   }
 
   void _onRotationChanged(double radians) {
     final layer = _project.selectedLayer;
-    if (layer == null || layer.keyframes.isEmpty) return;
-    setState(() => layer.keyframes.first.rotation = radians);
+    if (layer == null || layer.styleKeyframes.isEmpty) return;
+    setState(() => layer.styleKeyframes.first.rotation = radians);
     _scheduleSave();
   }
 
@@ -250,12 +253,12 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
 
   /// 画像座標のレイヤー矩形をキャンバス座標に変換
   Rect _layerCanvasRect(MosaicLayer layer, Rect imageRect, double scale) {
-    if (layer.keyframes.isEmpty) return Rect.zero;
-    final kf = layer.keyframes.first;
-    final cx = imageRect.left + kf.position.dx * scale;
-    final cy = imageRect.top + kf.position.dy * scale;
-    final w = kf.size.width * scale;
-    final h = kf.size.height * scale;
+    if (!layer.hasContent) return Rect.zero;
+    final state = layer.getStateAt(Duration.zero);
+    final cx = imageRect.left + state.position.dx * scale;
+    final cy = imageRect.top + state.position.dy * scale;
+    final w = state.size.width * scale;
+    final h = state.size.height * scale;
     return Rect.fromCenter(center: Offset(cx, cy), width: w, height: h);
   }
 
@@ -264,8 +267,8 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
   void _moveLayer(int index, Offset canvasDelta, double scale) {
     if (index < 0 || index >= _project.layers.length) return;
     final layer = _project.layers[index];
-    if (layer.locked || layer.keyframes.isEmpty) return;
-    final kf = layer.keyframes.first;
+    if (layer.locked || layer.pathKeyframes.isEmpty) return;
+    final kf = layer.pathKeyframes.first;
     setState(() {
       kf.position = Offset(
         (kf.position.dx + canvasDelta.dx / scale)
@@ -281,8 +284,9 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
       double scale) {
     if (index < 0 || index >= _project.layers.length) return;
     final layer = _project.layers[index];
-    if (layer.locked || layer.keyframes.isEmpty) return;
-    final kf = layer.keyframes.first;
+    if (layer.locked || !layer.hasContent) return;
+    final pos = layer.pathKeyframes.first;
+    final style = layer.styleKeyframes.first;
 
     // 画像座標系でのデルタ
     final imgDx = canvasDelta.dx / scale;
@@ -310,18 +314,18 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
     }
 
     setState(() {
-      final newW = (kf.size.width + imgDx * widthSign)
+      final newW = (style.size.width + imgDx * widthSign)
           .clamp(20.0, _imageSize.width);
-      final newH = (kf.size.height + imgDy * heightSign)
+      final newH = (style.size.height + imgDy * heightSign)
           .clamp(20.0, _imageSize.height);
       // 実際のサイズ変化量（clamp 後）
-      final actualDw = newW - kf.size.width;
-      final actualDh = newH - kf.size.height;
-      kf.size = Size(newW, newH);
+      final actualDw = newW - style.size.width;
+      final actualDh = newH - style.size.height;
+      style.size = Size(newW, newH);
       // 中心は固定側の反対方向に半分ずつ移動
-      kf.position = Offset(
-        kf.position.dx + (actualDw * widthSign) / 2,
-        kf.position.dy + (actualDh * heightSign) / 2,
+      pos.position = Offset(
+        pos.position.dx + (actualDw * widthSign) / 2,
+        pos.position.dy + (actualDh * heightSign) / 2,
       );
     });
     _scheduleSave();
@@ -577,7 +581,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
               // 各レイヤーのオーバーレイ（選択枠・ハンドル）
               for (int i = 0; i < _project.layers.length; i++)
                 if (_project.layers[i].visible &&
-                    _project.layers[i].keyframes.isNotEmpty)
+                    _project.layers[i].hasContent)
                   MosaicOverlay(
                     key: ValueKey('overlay_${_project.layers[i].id}'),
                     layer: _project.layers[i],

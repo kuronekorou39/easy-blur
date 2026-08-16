@@ -36,6 +36,9 @@ class EditorBottomSheet extends StatefulWidget {
   final ValueChanged<int>? onAddKeyframeAtCurrent;
   final ValueChanged<int>? onDeleteKeyframeAtCurrent;
   final void Function(int layerIndex, int keyframeIndex)? onDeleteKeyframe;
+  final ValueChanged<int>? onAddStylePointAtCurrent;
+  final ValueChanged<int>? onDeleteStylePointAtCurrent;
+  final void Function(int layerIndex, int styleIndex)? onDeleteStylePoint;
 
   const EditorBottomSheet({
     super.key,
@@ -64,6 +67,9 @@ class EditorBottomSheet extends StatefulWidget {
     this.onAddKeyframeAtCurrent,
     this.onDeleteKeyframeAtCurrent,
     this.onDeleteKeyframe,
+    this.onAddStylePointAtCurrent,
+    this.onDeleteStylePointAtCurrent,
+    this.onDeleteStylePoint,
   });
 
   @override
@@ -185,6 +191,11 @@ class _EditorBottomSheetState extends State<EditorBottomSheet>
                           onDeleteKeyframeAtCurrent:
                               widget.onDeleteKeyframeAtCurrent,
                           onDeleteKeyframe: widget.onDeleteKeyframe,
+                          onAddStylePointAtCurrent:
+                              widget.onAddStylePointAtCurrent,
+                          onDeleteStylePointAtCurrent:
+                              widget.onDeleteStylePointAtCurrent,
+                          onDeleteStylePoint: widget.onDeleteStylePoint,
                         ),
                       ),
                     SizedBox(height: bottomInset > 0 ? bottomInset : 0),

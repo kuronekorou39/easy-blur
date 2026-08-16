@@ -15,69 +15,70 @@ enum MosaicShape {
   heart,
 }
 
-class Keyframe {
+/// 経路キーフレーム。モザイクの移動経路（位置）だけを持つ
+class PathPoint {
   final Duration time;
   Offset position;
-  Size size;
-  double rotation;
-  double intensity;
 
-  Keyframe({
-    required this.time,
-    required this.position,
-    required this.size,
-    this.rotation = 0.0,
-    this.intensity = 20.0,
-  });
-
-  Keyframe copyWith({
-    Duration? time,
-    Offset? position,
-    Size? size,
-    double? rotation,
-    double? intensity,
-  }) {
-    return Keyframe(
-      time: time ?? this.time,
-      position: position ?? this.position,
-      size: size ?? this.size,
-      rotation: rotation ?? this.rotation,
-      intensity: intensity ?? this.intensity,
-    );
-  }
-
-  static Keyframe lerp(Keyframe a, Keyframe b, double t) {
-    return Keyframe(
-      time: Duration(
-        milliseconds:
-            (a.time.inMilliseconds + (b.time.inMilliseconds - a.time.inMilliseconds) * t).round(),
-      ),
-      position: Offset.lerp(a.position, b.position, t)!,
-      size: Size.lerp(a.size, b.size, t)!,
-      rotation: a.rotation + (b.rotation - a.rotation) * t,
-      intensity: a.intensity + (b.intensity - a.intensity) * t,
-    );
-  }
+  PathPoint({required this.time, required this.position});
 
   Map<String, dynamic> toJson() => {
         'timeMs': time.inMilliseconds,
         'posX': position.dx,
         'posY': position.dy,
+      };
+
+  static PathPoint fromJson(Map<String, dynamic> json) => PathPoint(
+        time: Duration(milliseconds: (json['timeMs'] as num).toInt()),
+        position: Offset(
+            (json['posX'] as num).toDouble(), (json['posY'] as num).toDouble()),
+      );
+}
+
+/// 基準キーフレーム。サイズ・回転・強度を持ち、経路とは独立して補間される
+class StylePoint {
+  final Duration time;
+  Size size;
+  double rotation;
+  double intensity;
+
+  StylePoint({
+    required this.time,
+    required this.size,
+    this.rotation = 0.0,
+    this.intensity = 20.0,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'timeMs': time.inMilliseconds,
         'sizeW': size.width,
         'sizeH': size.height,
         'rotation': rotation,
         'intensity': intensity,
       };
 
-  static Keyframe fromJson(Map<String, dynamic> json) => Keyframe(
+  static StylePoint fromJson(Map<String, dynamic> json) => StylePoint(
         time: Duration(milliseconds: (json['timeMs'] as num).toInt()),
-        position: Offset(
-            (json['posX'] as num).toDouble(), (json['posY'] as num).toDouble()),
         size: Size(
             (json['sizeW'] as num).toDouble(), (json['sizeH'] as num).toDouble()),
         rotation: (json['rotation'] as num?)?.toDouble() ?? 0.0,
         intensity: (json['intensity'] as num?)?.toDouble() ?? 20.0,
       );
+}
+
+/// 指定時刻における経路・基準の補間結果
+class LayerState {
+  final Offset position;
+  final Size size;
+  final double rotation;
+  final double intensity;
+
+  const LayerState({
+    required this.position,
+    required this.size,
+    required this.rotation,
+    required this.intensity,
+  });
 }
 
 class MosaicLayer {
@@ -110,7 +111,11 @@ class MosaicLayer {
   /// デフォルトは非常に大きな値で事実上無制限
   Duration endTime;
 
-  List<Keyframe> keyframes;
+  /// 移動経路（位置のキーフレーム列）
+  List<PathPoint> pathKeyframes;
+
+  /// 基準（サイズ・回転・強度のキーフレーム列）。経路とは独立
+  List<StylePoint> styleKeyframes;
 
   MosaicLayer({
     required this.id,
@@ -124,56 +129,97 @@ class MosaicLayer {
     this.barAngle = 0.0,
     this.startTime = Duration.zero,
     this.endTime = const Duration(days: 1),
-    List<Keyframe>? keyframes,
-  }) : keyframes = keyframes ?? [];
+    List<PathPoint>? pathKeyframes,
+    List<StylePoint>? styleKeyframes,
+  })  : pathKeyframes = pathKeyframes ?? [],
+        styleKeyframes = styleKeyframes ?? [];
+
+  /// 描画に必要なキーフレームが揃っているか
+  bool get hasContent => pathKeyframes.isNotEmpty && styleKeyframes.isNotEmpty;
 
   /// 指定時刻でレイヤーがアクティブ（表示対象）かどうか
   bool isActiveAt(Duration time) {
     return time >= startTime && time <= endTime;
   }
 
-  /// Get interpolated keyframe at a given time.
-  /// For image mode, returns the first keyframe (or a default).
-  Keyframe getStateAt(Duration time) {
-    if (keyframes.isEmpty) {
-      return Keyframe(
-        time: Duration.zero,
-        position: Offset.zero,
-        size: const Size(100, 100),
-      );
+  /// 指定時刻の位置（経路の線形補間）
+  Offset positionAt(Duration time) {
+    if (pathKeyframes.isEmpty) return Offset.zero;
+    final t = _segment(pathKeyframes.map((p) => p.time).toList(), time);
+    if (t == null) {
+      return time <= pathKeyframes.first.time
+          ? pathKeyframes.first.position
+          : pathKeyframes.last.position;
     }
+    final a = pathKeyframes[t.$1];
+    final b = pathKeyframes[t.$1 + 1];
+    return Offset.lerp(a.position, b.position, t.$2)!;
+  }
 
-    if (keyframes.length == 1) return keyframes.first;
-
-    // Before first keyframe
-    if (time <= keyframes.first.time) return keyframes.first;
-
-    // After last keyframe
-    if (time >= keyframes.last.time) return keyframes.last;
-
-    // Find the two surrounding keyframes and lerp
-    for (int i = 0; i < keyframes.length - 1; i++) {
-      final a = keyframes[i];
-      final b = keyframes[i + 1];
-      if (time >= a.time && time <= b.time) {
-        final range = (b.time - a.time).inMilliseconds;
-        if (range == 0) return a;
-        final t = (time - a.time).inMilliseconds / range;
-        return Keyframe.lerp(a, b, t);
+  /// 指定時刻のサイズ・回転・強度（基準の線形補間）
+  LayerState getStateAt(Duration time) {
+    Size size = const Size(100, 100);
+    double rotation = 0.0;
+    double intensity = 20.0;
+    if (styleKeyframes.isNotEmpty) {
+      final t = _segment(styleKeyframes.map((s) => s.time).toList(), time);
+      if (t == null) {
+        final s = time <= styleKeyframes.first.time
+            ? styleKeyframes.first
+            : styleKeyframes.last;
+        size = s.size;
+        rotation = s.rotation;
+        intensity = s.intensity;
+      } else {
+        final a = styleKeyframes[t.$1];
+        final b = styleKeyframes[t.$1 + 1];
+        size = Size.lerp(a.size, b.size, t.$2)!;
+        rotation = a.rotation + (b.rotation - a.rotation) * t.$2;
+        intensity = a.intensity + (b.intensity - a.intensity) * t.$2;
       }
     }
-
-    return keyframes.last;
+    return LayerState(
+      position: positionAt(time),
+      size: size,
+      rotation: rotation,
+      intensity: intensity,
+    );
   }
 
-  void addKeyframe(Keyframe kf) {
-    keyframes.add(kf);
-    keyframes.sort((a, b) => a.time.compareTo(b.time));
+  /// [times]（昇順）の中で time を挟む区間 (index, 補間率) を返す。
+  /// 範囲外・単一要素の場合は null
+  (int, double)? _segment(List<Duration> times, Duration time) {
+    if (times.length < 2) return null;
+    if (time <= times.first || time >= times.last) return null;
+    for (int i = 0; i < times.length - 1; i++) {
+      if (time >= times[i] && time <= times[i + 1]) {
+        final range = (times[i + 1] - times[i]).inMilliseconds;
+        if (range == 0) return (i, 0.0);
+        return (i, (time - times[i]).inMilliseconds / range);
+      }
+    }
+    return null;
   }
 
-  void removeKeyframeAt(int index) {
-    if (index >= 0 && index < keyframes.length) {
-      keyframes.removeAt(index);
+  void addPathKeyframe(PathPoint point) {
+    pathKeyframes.add(point);
+    pathKeyframes.sort((a, b) => a.time.compareTo(b.time));
+  }
+
+  void removePathKeyframeAt(int index) {
+    if (index >= 0 && index < pathKeyframes.length) {
+      pathKeyframes.removeAt(index);
+    }
+  }
+
+  void addStyleKeyframe(StylePoint point) {
+    styleKeyframes.add(point);
+    styleKeyframes.sort((a, b) => a.time.compareTo(b.time));
+  }
+
+  void removeStyleKeyframeAt(int index) {
+    if (index >= 0 && index < styleKeyframes.length) {
+      styleKeyframes.removeAt(index);
     }
   }
 
@@ -189,7 +235,8 @@ class MosaicLayer {
         'barAngle': barAngle,
         'startTimeMs': startTime.inMilliseconds,
         'endTimeMs': endTime.inMilliseconds,
-        'keyframes': keyframes.map((k) => k.toJson()).toList(),
+        'pathKeyframes': pathKeyframes.map((p) => p.toJson()).toList(),
+        'styleKeyframes': styleKeyframes.map((s) => s.toJson()).toList(),
       };
 
   static MosaicLayer fromJson(Map<String, dynamic> json) {
@@ -212,6 +259,35 @@ class MosaicLayer {
           orElse: () => MosaicType.pixelate,
         );
     }
+    // 経路・基準の読み込み。旧形式（keyframes に全プロパティ同居）は
+    // 位置→経路、サイズ等→基準へ分解して移行する（描画結果は同一）
+    List<PathPoint> path;
+    List<StylePoint> styles;
+    if (json['pathKeyframes'] != null) {
+      path = (json['pathKeyframes'] as List<dynamic>)
+          .map((p) => PathPoint.fromJson(p as Map<String, dynamic>))
+          .toList();
+      styles = (json['styleKeyframes'] as List<dynamic>? ?? [])
+          .map((s) => StylePoint.fromJson(s as Map<String, dynamic>))
+          .toList();
+    } else {
+      final legacy = (json['keyframes'] as List<dynamic>? ?? [])
+          .map((k) => k as Map<String, dynamic>)
+          .toList();
+      path = legacy.map(PathPoint.fromJson).toList();
+      styles = legacy.map(StylePoint.fromJson).toList();
+      // 旧仕様ではサイズ・強度が全キーフレーム共通のことが多いため、
+      // 全て同一値なら基準1つに集約する（描画結果は変わらない）
+      if (styles.length > 1) {
+        final first = styles.first;
+        final uniform = styles.every((s) =>
+            s.size == first.size &&
+            s.rotation == first.rotation &&
+            s.intensity == first.intensity);
+        if (uniform) styles = [first];
+      }
+    }
+
     return MosaicLayer(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -230,10 +306,8 @@ class MosaicLayer {
       endTime: Duration(
           milliseconds: (json['endTimeMs'] as num?)?.toInt() ??
               const Duration(days: 1).inMilliseconds),
-      keyframes: (json['keyframes'] as List<dynamic>?)
-              ?.map((k) => Keyframe.fromJson(k as Map<String, dynamic>))
-              .toList() ??
-          [],
+      pathKeyframes: path,
+      styleKeyframes: styles,
     );
   }
 }
