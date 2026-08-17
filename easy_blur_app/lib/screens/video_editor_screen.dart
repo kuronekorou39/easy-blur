@@ -53,6 +53,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   bool _scrubbing = false;
   bool _resumeAfterScrub = false;
 
+  // 直近のシーク所要時間（ms）。重い動画ではドラッグ中の中間シークを省く
+  int _lastSeekCostMs = 0;
+  Duration? _scrubSkippedTarget;
+
   // 再生速度
   double _playbackSpeed = 1.0;
 
@@ -211,23 +215,46 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         _playLoading = false;
       });
     } else {
+      // 末尾で停止している場合は自前で先頭へ戻してから再生する。
+      // video_player 内部の「終端で play すると自動で 0 へシーク」は
+      // 完了を検知できず、長時間固まって見えるため使わない
+      final atEnd = _totalDuration > Duration.zero &&
+          _currentTime >=
+              _totalDuration - const Duration(milliseconds: 200);
       setState(() {
         _playing = true;
         _playLoading = true;
-        _playStartPos = _currentTime;
+        _playStartPos = atEnd ? Duration.zero : _currentTime;
       });
-      ctrl.play();
-      // 1.5秒たってもローディングが解けなかったら強制解除
-      _playLoadingTimeout = Timer(
-        const Duration(milliseconds: 1500),
-        () {
-          if (!mounted) return;
-          if (_playLoading) {
-            setState(() => _playLoading = false);
-          }
-        },
-      );
+      if (atEnd) {
+        _resumeAfterScrub = true; // 巻き戻し完了後に play する
+        _seekTo(Duration.zero);
+      } else if (_seeking || _pendingSeek != null) {
+        // シーク処理が残っている間は、完了してから再生を開始する
+        _resumeAfterScrub = true;
+      } else {
+        ctrl.play();
+      }
+      _schedulePlayLoadingClear();
     }
+  }
+
+  /// 再生ローディング表示の強制解除タイマー。
+  /// シーク処理が続いている間は解除せず、スピナーで「処理中」を伝える
+  void _schedulePlayLoadingClear() {
+    _playLoadingTimeout = Timer(
+      const Duration(milliseconds: 1500),
+      () {
+        if (!mounted) return;
+        if (_seeking || _pendingSeek != null || _resumeAfterScrub) {
+          _schedulePlayLoadingClear();
+          return;
+        }
+        if (_playLoading) {
+          setState(() => _playLoading = false);
+        }
+      },
+    );
   }
 
   void _setPlaybackSpeed(double speed) {
@@ -249,6 +276,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           time.inMilliseconds.clamp(0, _totalDuration.inMilliseconds),
     );
     setState(() => _currentTime = clamped);
+    // シークが重い動画（キーフレームが疎）では、ドラッグ中の
+    // 中間シークを省略し、指を離したときに1回だけシークする
+    if (_scrubbing && _lastSeekCostMs > 350) {
+      _scrubSkippedTarget = clamped;
+      return;
+    }
+    _scrubSkippedTarget = null;
     // 実際のシークはキューを畳み込み、最新値のみ反映
     _pendingSeek = clamped;
     _drainSeek();
@@ -259,10 +293,15 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _seeking = true;
     final ctrl = _videoController;
     try {
+      final sw = Stopwatch();
       while (_pendingSeek != null && ctrl != null) {
         final next = _pendingSeek!;
         _pendingSeek = null;
+        sw
+          ..reset()
+          ..start();
         await ctrl.seekTo(next);
+        _lastSeekCostMs = sw.elapsedMilliseconds;
       }
     } finally {
       _seeking = false;
@@ -285,6 +324,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// スクラブ終了: 残っているシークが完了してから再生を再開する
   void _onScrubEnd() {
     _scrubbing = false;
+    // ドラッグ中に省略していた最終位置へ確定シーク
+    if (_scrubSkippedTarget != null) {
+      _pendingSeek = _scrubSkippedTarget;
+      _scrubSkippedTarget = null;
+      _drainSeek();
+    }
     _maybeResumeAfterScrub();
   }
 
