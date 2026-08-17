@@ -6,6 +6,7 @@ import '../models/models.dart';
 import '../utils/project_storage.dart';
 import '../utils/theme.dart';
 import '../utils/update_checker.dart';
+import '../widgets/project_thumbnail.dart';
 import 'image_editor_screen.dart';
 import 'video_editor_screen.dart';
 
@@ -504,7 +505,6 @@ class _ProjectCard extends StatelessWidget {
       onLongPress: onDelete,
       child: Container(
         width: 150,
-        padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           color: AppTheme.bgSecondary,
           borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
@@ -513,60 +513,99 @@ class _ProjectCard extends StatelessWidget {
           ),
           boxShadow: AppTheme.shadowSm,
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        accent.withValues(alpha: 0.3),
-                        accent.withValues(alpha: 0.08),
-                      ],
-                    ),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: accent.withValues(alpha: 0.35),
-                    ),
-                  ),
-                  child: Icon(
-                    isVideo
-                        ? Icons.videocam_rounded
-                        : Icons.image_rounded,
-                    color: accent,
-                    size: 20,
+            // メディアのサムネイル（カード全面）
+            ProjectThumbnail(project: project),
+            // 下部の文字を読みやすくするグラデーション
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    stops: const [0.35, 1.0],
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withValues(alpha: 0.75),
+                    ],
                   ),
                 ),
-                const Spacer(),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: AppTheme.bgHover,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    '${project.layers.length}層',
-                    style: AppTheme.textCaption.copyWith(fontSize: 10),
-                  ),
-                ),
-              ],
+              ),
             ),
-            const Spacer(),
-            Text(
-              _shortName(project.mediaPath),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTheme.textBodyStrong.copyWith(fontSize: 13),
+            // 上段: 種別アイコン + レイヤー数
+            Positioned(
+              top: 8,
+              left: 8,
+              right: 8,
+              child: Row(
+                children: [
+                  Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.55),
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border.all(
+                        color: accent.withValues(alpha: 0.6),
+                      ),
+                    ),
+                    child: Icon(
+                      isVideo
+                          ? Icons.videocam_rounded
+                          : Icons.image_rounded,
+                      color: accent,
+                      size: 14,
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.55),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      '${project.layers.length}層',
+                      style: AppTheme.textCaption.copyWith(
+                        fontSize: 10,
+                        color: Colors.white.withValues(alpha: 0.9),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 3),
-            Text(
-              _formatUpdatedAt(project.updatedAt),
-              style: AppTheme.textCaption.copyWith(fontSize: 11),
+            // 下段: ファイル名 + 更新時期
+            Positioned(
+              left: 10,
+              right: 10,
+              bottom: 8,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _shortName(project.mediaPath),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.textBodyStrong.copyWith(
+                      fontSize: 12,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _formatUpdatedAt(project.updatedAt),
+                    style: AppTheme.textCaption.copyWith(
+                      fontSize: 10,
+                      color: Colors.white.withValues(alpha: 0.75),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),

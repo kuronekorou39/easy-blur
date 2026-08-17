@@ -27,6 +27,10 @@ class CompactPlaybackBar extends StatefulWidget {
   final VoidCallback? onScrubStart;
   final VoidCallback? onScrubEnd;
 
+  /// ミュート（onToggleMute 未指定なら非表示）
+  final bool isMuted;
+  final VoidCallback? onToggleMute;
+
   const CompactPlaybackBar({
     super.key,
     required this.isPlaying,
@@ -37,6 +41,8 @@ class CompactPlaybackBar extends StatefulWidget {
     this.isLoading = false,
     this.playbackSpeed = 1.0,
     this.onSpeedChanged,
+    this.isMuted = false,
+    this.onToggleMute,
     this.onScrubStart,
     this.onScrubEnd,
   });
@@ -366,10 +372,20 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
             ),
           ],
           const SizedBox(height: 4),
-          // 下段: 戻る / 再生 / 進む（右端に速度）
+          // 下段: 戻る / 再生 / 進む（左端にミュート、右端に速度）
           Row(
             children: [
-              const Spacer(),
+              Expanded(
+                child: widget.onToggleMute == null
+                    ? const SizedBox()
+                    : Align(
+                        alignment: Alignment.centerLeft,
+                        child: _MuteButton(
+                          isMuted: widget.isMuted,
+                          onTap: widget.onToggleMute!,
+                        ),
+                      ),
+              ),
               _SeekButton(
                 icon: Icons.fast_rewind_rounded,
                 label: label,
@@ -418,6 +434,51 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
     }
     final f = ((d.inMilliseconds % 1000) / 100).floor();
     return '$m:${s.toString().padLeft(2, '0')}.$f';
+  }
+}
+
+/// ミュート切替ボタン。ミュート中はアクセント表示
+class _MuteButton extends StatelessWidget {
+  final bool isMuted;
+  final VoidCallback onTap;
+
+  const _MuteButton({required this.isMuted, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: isMuted ? 'ミュート解除' : 'ミュート',
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          width: 44,
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: isMuted
+                ? AppTheme.accent.withValues(alpha: 0.22)
+                : AppTheme.bgHover.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+            border: Border.all(
+              color: isMuted
+                  ? AppTheme.accent.withValues(alpha: 0.6)
+                  : AppTheme.borderColor.withValues(alpha: 0.4),
+              width: isMuted ? 1.0 : 0.5,
+            ),
+          ),
+          child: Icon(
+            isMuted
+                ? Icons.volume_off_rounded
+                : Icons.volume_up_rounded,
+            size: 19,
+            color: isMuted
+                ? AppTheme.accentBright
+                : AppTheme.textPrimary,
+          ),
+        ),
+      ),
+    );
   }
 }
 

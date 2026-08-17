@@ -60,6 +60,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   // 再生速度
   double _playbackSpeed = 1.0;
 
+  // ミュート
+  bool _muted = false;
+
   // 再生開始のバッファリング表示
   bool _playLoading = false;
   Duration _playStartPos = Duration.zero;
@@ -77,6 +80,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     super.initState();
     _project = widget.project;
     _playbackSpeed = _project.playbackSpeed;
+    _muted = _project.muted;
     _history.push(_project);
     _initVideo();
   }
@@ -95,9 +99,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         return;
       }
 
-      // 前回の編集時に使っていた再生速度を復元
+      // 前回の編集時に使っていた再生速度・ミュートを復元
       if (_playbackSpeed != 1.0) {
         await controller.setPlaybackSpeed(_playbackSpeed);
+      }
+      if (_muted) {
+        await controller.setVolume(0);
       }
 
       // 表示サイズは aspectRatio から逆算（rotationCorrection の挙動が
@@ -264,6 +271,16 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     ctrl.setPlaybackSpeed(speed);
     // 次回開いたとき復元できるよう保存（履歴には積まない）
     _project.playbackSpeed = speed;
+    ProjectStorage.requestSave(_project);
+  }
+
+  void _toggleMute() {
+    final ctrl = _videoController;
+    if (ctrl == null) return;
+    setState(() => _muted = !_muted);
+    ctrl.setVolume(_muted ? 0 : 1);
+    // 次回開いたとき復元できるよう保存（履歴には積まない）
+    _project.muted = _muted;
     ProjectStorage.requestSave(_project);
   }
 
@@ -961,6 +978,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       onSeek: _seekTo,
       playbackSpeed: _playbackSpeed,
       onSpeedChanged: _setPlaybackSpeed,
+      isMuted: _muted,
+      onToggleMute: _toggleMute,
       onScrubStart: _onScrubStart,
       onScrubEnd: _onScrubEnd,
     );
@@ -1067,6 +1086,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             onTogglePlay: _togglePlayPause,
             onSeek: _seekTo,
             onSpeedChanged: _setPlaybackSpeed,
+            isMuted: _muted,
+            onToggleMute: _toggleMute,
             onScrubStart: _onScrubStart,
             onScrubEnd: _onScrubEnd,
             onClose: _closePreview,
