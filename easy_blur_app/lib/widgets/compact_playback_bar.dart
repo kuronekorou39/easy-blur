@@ -63,7 +63,14 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
   double? _dragWinEndMs;
 
   /// 選択肢
-  static const List<int> _skipOptions = [500, 1000, 5000, 10000, 30000];
+  static const List<int> _skipOptions = [
+    100,
+    500,
+    1000,
+    5000,
+    10000,
+    30000,
+  ];
 
   /// 再生速度の選択肢
   static const List<double> _speedOptions = [0.1, 0.2, 0.5, 1.0, 2.0];
