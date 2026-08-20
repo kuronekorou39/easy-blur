@@ -53,9 +53,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   bool _scrubbing = false;
   bool _resumeAfterScrub = false;
 
-  // 直近のシーク所要時間（ms）。重い動画ではドラッグ中の中間シークを省く
-  int _lastSeekCostMs = 0;
+  // 2秒以上離れた位置への実シーク所要時間の最大値（ms）。未計測は -1。
+  // 「軽い」と実測できた動画だけドラッグ中のライブシークを行う。
+  // （逆だと、最初のドラッグで必ず重いシークが発行されて長時間固まる）
+  int _maxSeekCostMs = -1;
   Duration? _scrubSkippedTarget;
+
+  bool get _canLiveScrub => _maxSeekCostMs >= 0 && _maxSeekCostMs < 350;
 
   // 再生速度
   double _playbackSpeed = 1.0;
@@ -293,9 +297,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           time.inMilliseconds.clamp(0, _totalDuration.inMilliseconds),
     );
     setState(() => _currentTime = clamped);
-    // シークが重い動画（キーフレームが疎）では、ドラッグ中の
-    // 中間シークを省略し、指を離したときに1回だけシークする
-    if (_scrubbing && _lastSeekCostMs > 350) {
+    // ドラッグ中は原則シークを発行せず、指を離したときに1回だけにする。
+    // シークが軽いと実測済みの動画に限りライブシークする
+    if (_scrubbing && !_canLiveScrub) {
       _scrubSkippedTarget = clamped;
       return;
     }
@@ -314,11 +318,18 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       while (_pendingSeek != null && ctrl != null) {
         final next = _pendingSeek!;
         _pendingSeek = null;
+        final before = ctrl.value.position;
         sw
           ..reset()
           ..start();
         await ctrl.seekTo(next);
-        _lastSeekCostMs = sw.elapsedMilliseconds;
+        // シークの重さはキーフレーム間隔に依存するため、
+        // 2秒以上離れた位置へのシークだけをサンプルとして採用する
+        final distMs = (next - before).inMilliseconds.abs();
+        if (distMs >= 2000) {
+          _maxSeekCostMs =
+              math.max(_maxSeekCostMs, sw.elapsedMilliseconds);
+        }
       }
     } finally {
       _seeking = false;
@@ -343,8 +354,15 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _scrubbing = false;
     // ドラッグ中に省略していた最終位置へ確定シーク
     if (_scrubSkippedTarget != null) {
-      _pendingSeek = _scrubSkippedTarget;
+      var target = _scrubSkippedTarget!;
       _scrubSkippedTarget = null;
+      // 先頭付近で離したときは正確に 0 へ寄せる
+      //（0 はキーフレームなのでシークが一瞬で終わる）
+      if (target.inMilliseconds <= 500) {
+        target = Duration.zero;
+        setState(() => _currentTime = Duration.zero);
+      }
+      _pendingSeek = target;
       _drainSeek();
     }
     _maybeResumeAfterScrub();
