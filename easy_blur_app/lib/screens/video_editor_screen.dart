@@ -134,37 +134,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
 
       _positionTimer = Timer.periodic(
         const Duration(milliseconds: 100),
-        (_) {
-          if (!mounted) return;
-          if (_seeking || _pendingSeek != null) return;
-          final ctrl = _videoController;
-          if (ctrl == null) return;
-          final pos = ctrl.value.position;
-          final nowPlaying = ctrl.value.isPlaying;
-
-          // 再生ローディング解除条件（いずれか）:
-          //   - isPlaying が true になった
-          //   - position が開始位置より進んだ
-          // isBuffering は環境によって常に true のケースがあるため使わない
-          bool newPlayLoading = _playLoading;
-          if (_playLoading) {
-            final progressed = pos.inMilliseconds >
-                _playStartPos.inMilliseconds + 30;
-            if (nowPlaying || progressed) {
-              newPlayLoading = false;
-            }
-          }
-
-          if (pos != _currentTime ||
-              nowPlaying != _playing ||
-              newPlayLoading != _playLoading) {
-            setState(() {
-              _currentTime = pos;
-              _playing = nowPlaying;
-              _playLoading = newPlayLoading;
-            });
-          }
-        },
+        (_) => _pollPosition(),
       );
     } catch (e) {
       if (!mounted) return;
@@ -172,6 +142,52 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         _loading = false;
         _loadError = e.toString();
       });
+    }
+  }
+
+  bool _pollingPosition = false;
+
+  /// 再生位置の取得と状態更新。
+  /// `ctrl.value.position` はプラグイン側で500ms間隔でしか更新されず、
+  /// キーフレーム記録やモザイク表示が最大0.5秒遅れるため、
+  /// プラットフォームから直接取得する
+  Future<void> _pollPosition() async {
+    if (!mounted || _pollingPosition) return;
+    if (_seeking || _pendingSeek != null || _scrubbing) return;
+    final ctrl = _videoController;
+    if (ctrl == null) return;
+    _pollingPosition = true;
+    try {
+      final pos = await ctrl.position ?? ctrl.value.position;
+      if (!mounted) return;
+      // 取得中にシークやスクラブが始まっていたら破棄
+      if (_seeking || _pendingSeek != null || _scrubbing) return;
+      final nowPlaying = ctrl.value.isPlaying;
+
+      // 再生ローディング解除条件（いずれか）:
+      //   - isPlaying が true になった
+      //   - position が開始位置より進んだ
+      // isBuffering は環境によって常に true のケースがあるため使わない
+      bool newPlayLoading = _playLoading;
+      if (_playLoading) {
+        final progressed =
+            pos.inMilliseconds > _playStartPos.inMilliseconds + 30;
+        if (nowPlaying || progressed) {
+          newPlayLoading = false;
+        }
+      }
+
+      if (pos != _currentTime ||
+          nowPlaying != _playing ||
+          newPlayLoading != _playLoading) {
+        setState(() {
+          _currentTime = pos;
+          _playing = nowPlaying;
+          _playLoading = newPlayLoading;
+        });
+      }
+    } finally {
+      _pollingPosition = false;
     }
   }
 
@@ -679,9 +695,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     return Rect.fromCenter(center: Offset(cx, cy), width: w, height: h);
   }
 
-  /// 現在時刻に対応する経路キーフレームを取得または作成
+  /// 現在時刻に対応する経路キーフレームを取得または作成。
+  /// 許容幅は 60ms（≒30fpsで2フレーム）。以前は 200ms で、0.1倍速では
+  /// 実時間2秒分のドラッグが1点に潰れて経路が前倒しになり、
+  /// 等速再生でモザイクが顔より先行する原因になっていた。
+  /// 60ms なら 0.1秒送りでの位置修正とも干渉しない
   PathPoint _getOrCreatePathPointAt(MosaicLayer layer, Duration time) {
-    const toleranceMs = 200; // この時間内のキーフレームを同一とみなす
+    const toleranceMs = 60;
     for (final kf in layer.pathKeyframes) {
       if ((kf.time.inMilliseconds - time.inMilliseconds).abs() <=
           toleranceMs) {
