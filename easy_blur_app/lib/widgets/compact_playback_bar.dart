@@ -58,9 +58,9 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
   /// タイムラインのズーム倍率。1 で全体表示
   double _zoom = 1.0;
 
-  /// ドラッグ中に固定するズーム窓（再生位置への追従で窓が動くのを防ぐ）
-  double? _dragWinStartMs;
-  double? _dragWinEndMs;
+  /// ズーム窓の開始位置（ms）。窓は固定し、再生位置が窓の外に
+  /// 出たときだけページ送りする（つまみが普通に左→右へ動く）
+  double? _winStartMs;
 
   /// 選択肢
   static const List<int> _skipOptions = [
@@ -179,7 +179,10 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
         options: _zoomOptions,
         current: _zoom,
         format: (z) => '×${z.toInt()}',
-        onSelected: (z) => setState(() => _zoom = z),
+        onSelected: (z) => setState(() {
+          _zoom = z;
+          _winStartMs = null; // 倍率変更時は再生位置中心に窓を取り直す
+        }),
       );
 
   static String _formatSkip(int ms) {
@@ -202,18 +205,27 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
     final totalMs = widget.totalDuration.inMilliseconds.toDouble();
     final curMs = widget.currentTime.inMilliseconds.toDouble();
 
-    // ズーム窓の計算。通常は再生位置を中央に追従、ドラッグ中は固定
+    // ズーム窓の計算。窓は固定し、再生位置が窓の外に出たときだけ
+    // ページ送りする。ドラッグ中のシーク先は必ず窓の中に収まるため、
+    // ドラッグで窓が勝手に動くことはない
     double winStartMs = 0.0;
     double winEndMs = totalMs;
     if (_zoom > 1.0 && totalMs > 0) {
-      if (_dragWinStartMs != null && _dragWinEndMs != null) {
-        winStartMs = _dragWinStartMs!;
-        winEndMs = _dragWinEndMs!;
-      } else {
-        final winLen = totalMs / _zoom;
-        winStartMs = (curMs - winLen / 2).clamp(0.0, totalMs - winLen);
-        winEndMs = winStartMs + winLen;
+      final winLen = totalMs / _zoom;
+      var start = _winStartMs ?? (curMs - winLen / 2);
+      if (curMs > start + winLen) {
+        // 前方に出た: 再生位置を左端付近に置いて次のページへ
+        start = curMs - winLen * 0.1;
+      } else if (curMs < start) {
+        // 後方に出た（巻き戻しなど）: 再生位置を中央に
+        start = curMs - winLen * 0.5;
       }
+      start = start.clamp(0.0, math.max(0.0, totalMs - winLen));
+      _winStartMs = start;
+      winStartMs = start;
+      winEndMs = start + winLen;
+    } else {
+      _winStartMs = null;
     }
     final winLenMs = winEndMs - winStartMs;
     final progress = winLenMs > 0
@@ -265,12 +277,6 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
                     value: progress,
                     onChangeStart: (_) {
                       widget.onScrubStart?.call();
-                      if (_zoom > 1.0) {
-                        setState(() {
-                          _dragWinStartMs = winStartMs;
-                          _dragWinEndMs = winEndMs;
-                        });
-                      }
                     },
                     onChanged: (v) {
                       widget.onSeek(Duration(
@@ -279,12 +285,6 @@ class _CompactPlaybackBarState extends State<CompactPlaybackBar> {
                     },
                     onChangeEnd: (_) {
                       widget.onScrubEnd?.call();
-                      if (_dragWinStartMs != null) {
-                        setState(() {
-                          _dragWinStartMs = null;
-                          _dragWinEndMs = null;
-                        });
-                      }
                     },
                   ),
                 ),
