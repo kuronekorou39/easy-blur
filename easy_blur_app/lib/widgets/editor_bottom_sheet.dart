@@ -111,15 +111,6 @@ class _EditorBottomSheetState extends State<EditorBottomSheet>
     });
   }
 
-  void _expand() {
-    if (!_expanded) {
-      setState(() {
-        _expanded = true;
-        _expandCtrl.forward();
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).padding.bottom;
@@ -256,11 +247,6 @@ class _EditorBottomSheetState extends State<EditorBottomSheet>
                 ? AppTheme.textMuted
                 : AppTheme.accentBright,
           ),
-          const SizedBox(width: 8),
-          Text(
-            'レイヤー',
-            style: AppTheme.textHeader.copyWith(fontSize: 15),
-          ),
           const SizedBox(width: 6),
           if (widget.layers.isNotEmpty)
             Container(
@@ -281,9 +267,9 @@ class _EditorBottomSheetState extends State<EditorBottomSheet>
               ),
             ),
           const Spacer(),
-          if (!_expanded && widget.layers.isNotEmpty)
+          if (widget.layers.isNotEmpty)
             GestureDetector(
-              onTap: _expand,
+              onTap: _toggleExpand,
               behavior: HitTestBehavior.opaque,
               child: Container(
                 padding: const EdgeInsets.symmetric(
@@ -296,12 +282,19 @@ class _EditorBottomSheetState extends State<EditorBottomSheet>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('開く', style: AppTheme.textCaption),
+                    Text(
+                      _expanded ? '閉じる' : '開く',
+                      style: AppTheme.textCaption,
+                    ),
                     const SizedBox(width: 4),
-                    Icon(
-                      Icons.keyboard_arrow_up_rounded,
-                      size: 16,
-                      color: AppTheme.textMuted,
+                    AnimatedRotation(
+                      duration: AppTheme.animFast,
+                      turns: _expanded ? 0.5 : 0.0,
+                      child: Icon(
+                        Icons.keyboard_arrow_up_rounded,
+                        size: 16,
+                        color: AppTheme.textMuted,
+                      ),
                     ),
                   ],
                 ),

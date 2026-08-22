@@ -478,7 +478,18 @@ class _LayerTile extends StatelessWidget {
                 curve: Curves.easeOutCubic,
                 alignment: Alignment.topCenter,
                 child: isExpanded
-                    ? _buildExpandedProperties(state)
+                    // 高さに上限を設けて中でスクロールさせる。
+                    // 縦に伸びすぎて他のレイヤーが隠れるのを防ぐ
+                    ? ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight:
+                              (MediaQuery.of(context).size.height * 0.34)
+                                  .clamp(240.0, 360.0),
+                        ),
+                        child: SingleChildScrollView(
+                          child: _buildExpandedProperties(state),
+                        ),
+                      )
                     : const SizedBox(width: double.infinity, height: 0),
               ),
             ],
